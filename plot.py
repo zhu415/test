@@ -57,9 +57,16 @@ def restructure_dataframe(df):
             prices = parse_space_separated_values(prices_row['values'].iloc[0])
         
         if not symbols_row.empty:
-            # Symbols might be strings, so handle differently
+            # Parse symbols with format like (symbol1;symbol2,symbol3,symbol4)
             symbols_str = str(symbols_row['values'].iloc[0])
-            symbols = symbols_str.split() if not pd.isna(symbols_row['values'].iloc[0]) else []
+            if not pd.isna(symbols_row['values'].iloc[0]):
+                # Remove parentheses and split by both semicolons and commas
+                symbols_str = symbols_str.strip('()')
+                # Replace semicolons with commas, then split by commas
+                symbols_str = symbols_str.replace(';', ',')
+                symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+            else:
+                symbols = []
         
         if not shares_row.empty:
             shares = parse_space_separated_values(shares_row['values'].iloc[0])
