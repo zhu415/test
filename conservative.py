@@ -17,12 +17,15 @@ def rescale_weights_by_ratio_pattern(df1, df2):
         df2 (DataFrame): Contains 'ratio' and 'date' columns (subset of df1 dates)
     
     Returns:
-        DataFrame: df1 with new 'rescaled_weight' column
+        tuple: (DataFrame with rescaled_weight column, list of interval strings)
     """
     
     # Create a copy to avoid modifying original
     result_df = df1.copy()
     result_df['rescaled_weight'] = result_df['weight']  # Initialize with original weights
+    
+    # List to store interval strings
+    rescale_intervals = []
     
     # Sort df2 by date in DESCENDING order (latest to earliest)
     df2_sorted = df2.sort_values('date', ascending=False).reset_index(drop=True)
@@ -77,71 +80,17 @@ def rescale_weights_by_ratio_pattern(df1, df2):
             # Apply rescaling factor of 4/3
             result_df.loc[mask, 'rescaled_weight'] *= 4/3
             
+            # Create interval string and add to list
+            interval_str = f"[{earlier_date.strftime('%Y-%m-%d')}, {later_date.strftime('%Y-%m-%d')})"
+            rescale_intervals.append(interval_str)
+            
             print(f"Applied rescaling for positive-to-negative pattern:")
             print(f"  Positive ratio: {current_ratio:.3f} at {later_date}")
             print(f"  Negative ratio: {df2_sorted.loc[next_idx, 'ratio']:.3f} at {earlier_date}")
-            print(f"  Interval: [{earlier_date}, {later_date}) (left inclusive, right exclusive)")
+            print(f"  Interval: {interval_str} (left inclusive, right exclusive)")
             print(f"  Rows affected: {mask.sum()}")
             print()
         
         i += 1
     
-    return result_df
-
-
-# Example usage and test
-def create_test_data():
-    """Create sample test data to demonstrate the function"""
-    
-    # Create df1 with daily dates and weights
-    dates1 = pd.date_range('2024-01-01', '2024-01-20', freq='D')
-    df1 = pd.DataFrame({
-        'date': dates1,
-        'weight': np.random.uniform(10, 50, len(dates1))
-    })
-    
-    # Create df2 with subset of dates and ratios
-    # Design to show positive-to-negative patterns when processed in reverse
-    dates2 = ['2024-01-03', '2024-01-07', '2024-01-12', '2024-01-16', '2024-01-18']
-    ratios = [-0.5, 0.3, -0.2, 0.7, -0.1]  # Will process: 0.7→-0.2, then 0.3→-0.5
-    
-    df2 = pd.DataFrame({
-        'date': pd.to_datetime(dates2),
-        'ratio': ratios
-    })
-    
-    return df1, df2
-
-
-# Test the function
-if __name__ == "__main__":
-    # Create test data
-    df1, df2 = create_test_data()
-    
-    print("Original df1 (first 10 rows):")
-    print(df1.head(10))
-    print(f"\ndf1 shape: {df1.shape}")
-    
-    print("\ndf2 (all rows):")
-    print(df2)
-    print(f"df2 shape: {df2.shape}")
-    
-    print("\n" + "="*60)
-    print("PROCESSING RATIO PATTERNS (REVERSE TIME ORDER)")
-    print("Only positive-to-negative patterns will be processed")
-    print("="*60)
-    
-    # Apply the rescaling function
-    result = rescale_weights_by_ratio_pattern(df1, df2)
-    
-    print("\nFinal result (showing changes):")
-    # Show only rows where rescaling occurred
-    changed_mask = result['weight'] != result['rescaled_weight']
-    if changed_mask.any():
-        comparison = result[changed_mask][['date', 'weight', 'rescaled_weight']].copy()
-        comparison['change_factor'] = comparison['rescaled_weight'] / comparison['weight']
-        print(comparison)
-    else:
-        print("No weights were rescaled.")
-    
-    print(f"\nTotal rows rescaled: {changed_mask.sum()} out of {len(result)}")
+    return result_df, rescale_intervals
