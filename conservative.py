@@ -1,49 +1,49 @@
-def create_filtered_dataframes(df, time_periods):
+def plot_filtered_dataframes(filtered_dfs, plot_function):
     """
-    Create filtered dataframes for each time period with extended date ranges.
-    
-    For each interval [start_date, end_date), create a filtered dataframe where:
-    - Left boundary: start_date - 2 days (inclusive)
-    - Right boundary: end_date + 2 days (inclusive)
+    Create plots for each filtered dataframe using a custom plotting function.
     
     Args:
-        df (DataFrame): Source dataframe to filter (must have 'date' column)
-        time_periods (list): List of interval strings in format '[YYYY-MM-DD, YYYY-MM-DD)'
+        filtered_dfs (list): List of filtered dataframes from create_filtered_dataframes
+        plot_function: The plotting function to use (e.g., plot_bars_and_lines_mpl)
     
     Returns:
-        list: List of filtered dataframes, one for each time period
+        list: List of figure names that were created
     """
-    filtered_dfs = []
+    figure_names = []
     
-    for i, period in enumerate(time_periods):
-        # Parse the interval string
-        # Remove brackets and split by comma
-        period_clean = period.strip('[]()') 
-        start_str, end_str = period_clean.split(', ')
-        
-        # Convert to datetime
-        start_date = pd.to_datetime(start_str)
-        end_date = pd.to_datetime(end_str)
-        
-        # Extend the range: subtract 2 days from start, add 2 days to end
-        extended_start = start_date - pd.Timedelta(days=2)
-        extended_end = end_date + pd.Timedelta(days=2)
-        
-        # Filter the dataframe for the extended period (both endpoints inclusive)
-        mask = (df['date'] >= extended_start) & (df['date'] <= extended_end)
-        filtered_df = df[mask].copy()
-        
-        # Add some metadata to the filtered dataframe
-        filtered_df.attrs['original_period'] = period
-        filtered_df.attrs['extended_period'] = f"[{extended_start.strftime('%Y-%m-%d')}, {extended_end.strftime('%Y-%m-%d')}]"
-        filtered_df.attrs['period_index'] = i
-        
-        filtered_dfs.append(filtered_df)
-        
-        print(f"Period {i+1}: {period}")
-        print(f"  Original interval: {period}")
-        print(f"  Extended interval: [{extended_start.strftime('%Y-%m-%d')}, {extended_end.strftime('%Y-%m-%d')}]")
-        print(f"  Filtered dataframe shape: {filtered_df.shape}")
-        print()
+    print("=" * 60)
+    print("CREATING PLOTS FOR FILTERED DATAFRAMES")
+    print("=" * 60)
     
-    return filtered_dfs
+    for i, df in enumerate(filtered_dfs):
+        if len(df) == 0:
+            print(f"Skipping plot {i+1}: Empty dataframe")
+            continue
+            
+        # Extract period information for customized figure name
+        original_period = df.attrs.get('original_period', f'period_{i+1}')
+        extended_period = df.attrs.get('extended_period', f'extended_{i+1}')
+        
+        # Create a customized figure name based on the time period
+        # Clean the period string to make it filename-safe
+        period_clean = original_period.replace('[', '').replace(')', '').replace(', ', '_to_')
+        fig_name = f"rescaling_period_{i+1}_{period_clean}"
+        
+        print(f"Creating plot {i+1}:")
+        print(f"  Original period: {original_period}")
+        print(f"  Extended period: {extended_period}")
+        print(f"  Figure name: {fig_name}")
+        print(f"  Dataframe shape: {df.shape}")
+        
+        try:
+            # Call the plotting function with the filtered dataframe
+            plot_function(df, save_fig=True, fig_name=fig_name)
+            figure_names.append(fig_name)
+            print(f"  ✓ Plot created successfully")
+        except Exception as e:
+            print(f"  ✗ Error creating plot: {str(e)}")
+        
+        print("-" * 40)
+    
+    print(f"\nTotal plots created: {len(figure_names)}")
+    return figure_names
