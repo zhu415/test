@@ -1,149 +1,198 @@
 import pandas as pd
 import numpy as np
 
-def rescale_weights_by_ratio_pattern(df1, df2):
+def detect_075_multiplier_dates(df):
+    """
+    Detect dates when the 0.75 multiplier is applied in the S&P Prims index.
+    
+    The 0.75 multiplier is applied when:
+    - Equities multiplier = 5
+    - Rates multiplier = 10
+    
+    Parameters:
+    df: DataFrame containing the S&P Prims index data with columns:
+        - date
+        - price_per_share
+        - number_of_shares
+        - weights
+        - price (total portfolio value)
+    
+    Returns:
+    DataFrame with dates and verification of 0.75 multiplier application
+    """
+    
+    # Component names mapping
+    equities_component = 'spxeralt.cbny'
+    rates_component = 'spusttp.iomr'
+    commodities_component = 'spgscip.iomr'
+    cash_component = 'USD.CASH'
+    
+    # Function to calculate implied multipliers from weights
+    def calculate_implied_multipliers(date_data):
+        """
+        Back-calculate the multipliers based on weight ratios and known rules
+        """
+        result = {}
+        
+        # Get weights for each component on this date
+        equities_data = date_data[date_data.index.str.contains(equities_component, na=False)]
+        rates_data = date_data[date_data.index.str.contains(rates_component, na=False)]
+        commodities_data = date_data[date_data.index.str.contains(commodities_component, na=False)]
+        cash_data = date_data[date_data.index.str.contains(cash_component, na=False)]
+        
+        # Calculate risky weights (non-cash)
+        risky_weights = 1 - (cash_data['weights'].values[0] if len(cash_data) > 0 else 0)
+        
+        # Check if weights seem to be scaled by 0.75
+        # This would happen if risky_weights ≈ 0.75 when we'd expect them to be close to 1
+        result['risky_weights'] = risky_weights
+        result['has_equities'] = len(equities_data) > 0
+        result['has_rates'] = len(rates_data) > 0
+        result['has_commodities'] = len(commodities_data) > 0
+        
+        # Detect potential 0.75 scaling
+        # If risky weights are around 0.75 (allowing for leverage adjustments)
+        # this could indicate the 0.75 multiplier was applied
+        result['potential_075_scaling'] = (0.70 <= risky_weights <= 0.80)
+        
+        return result
+    
+    # Main detection logic
+    detection_results = []
+    
+    # Group by date
+    for date in df['date'].unique():
+        date_df = df[df['date'] == date].set_index('component', drop=False) if 'component' in df.columns else df[df['date'] == date]
+        
+        # Calculate metrics for this date
+        metrics = calculate_implied_multipliers(date_df)
+        
+        # Detect 0.75 multiplier application
+        # Method 1: Check if sum of non-cash weights is approximately 0.75
+        non_cash_mask = ~date_df.index.str.contains(cash_component, na=False)
+        non_cash_weights_sum = date_df.loc[non_cash_mask, 'weights'].sum()
+        
+        # Method 2: Check weight ratios between components
+        equities_weight = date_df[date_df.index.str.contains(equities_component, na=False)]['weights'].sum()
+        rates_weight = date_df[date_df.index.str.contains(rates_component, na=False)]['weights'].sum()
+        
+        # If both equities and rates are present with significant weights
+        # and the total risky weight is around 0.75, it's likely the multiplier was applied
+        is_075_applied = (
+            equities_weight > 0 and 
+            rates_weight > 0 and 
+            (0.70 <= non_cash_weights_sum <= 0.80)
+        )
+        
+        detection_results.append({
+            'date': date,
+            'equities_weight': equities_weight,
+            'rates_weight': rates_weight,
+            'non_cash_weights_sum': non_cash_weights_sum,
+            'cash_weight': 1 - non_cash_weights_sum,
+            'is_075_multiplier_applied': is_075_applied,
+            'likely_equities_multiplier': 5 if is_075_applied else 1,
+            'likely_rates_multiplier': 10 if is_075_applied else 1
+        })
+    
+    results_df = pd.DataFrame(detection_results)
+    return results_df
+
+def verify_075_multiplier_conditions(df, detection_results):
+    """
+    Cross-check the conditions for 0.75 multiplier application
+    
+    Returns detailed verification for each detected date
+    """
+    verification_results = []
+    
+    for _, row in detection_results[detection_results['is_075_multiplier_applied']].iterrows():
+        date = row['date']
+        date_df = df[df['date'] == date]
+        
+        # Verify conditions
+        verification = {
+            'date': date,
+            'condition_1_equities_mult_5': row['likely_equities_multiplier'] == 5,
+            'condition_2_rates_mult_10': row['likely_rates_multiplier'] == 10,
+            'observed_scaling': row['non_cash_weights_sum'],
+            'expected_scaling': 0.75,
+            'scaling_difference': abs(row['non_cash_weights_sum'] - 0.75),
+            'verification_passed': abs(row['non_cash_weights_sum'] - 0.75) < 0.05
+        }
+        
+        verification_results.append(verification)
+    
+    return pd.DataFrame(verification_results)
+
+# Example usage
+def analyze_sp_prims_multiplier(df):
+    """
+    Main function to analyze the S&P Prims index for 0.75 multiplier application
+    """
+    print("Detecting dates with 0.75 multiplier applied...")
+    detection_results = detect_075_multiplier_dates(df)
+    
+    # Filter for dates where multiplier was likely applied
+    multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]
+    
+    print(f"\nFound {len(multiplier_dates)} dates with 0.75 multiplier applied:")
+    print(multiplier_dates[['date', 'equities_weight', 'rates_weight', 'non_cash_weights_sum']])
+    
+    # Verify conditions
+    print("\nVerifying conditions for 0.75 multiplier application...")
+    verification = verify_075_multiplier_conditions(df, detection_results)
+    
+    if len(verification) > 0:
+        print(verification)
+    else:
+        print("No dates found with clear 0.75 multiplier application")
+    
+    return detection_results, verification
+
+# Advanced detection using weight ratios
+def detect_multipliers_from_weight_ratios(df):
+    """
+    Alternative method: Detect multipliers by analyzing weight ratios over time
+    """
+    results = []
+    
+    dates = df['date'].unique()
+    for i in range(1, len(dates)):
+        current_date = dates[i]
+        prev_date = dates[i-1]
+        
+        current_df = df[df['date'] == current_date]
+        prev_df = df[df['date'] == prev_date]
+        
+        # Calculate weight changes
+        current_non_cash = current_df[~current_df['component'].str.contains('USD.CASH', na=False)]['weights'].sum() if 'component' in df.columns else 0
+        prev_non_cash = prev_df[~prev_df['component'].str.contains('USD.CASH', na=False)]['weights'].sum() if 'component' in df.columns else 0
+        
+        # Check for sudden scaling to ~0.75
+        if prev_non_cash > 0.85 and 0.70 <= current_non_cash <= 0.80:
+            results.append({
+                'date': current_date,
+                'prev_date': prev_date,
+                'prev_non_cash_weight': prev_non_cash,
+                'current_non_cash_weight': current_non_cash,
+                'scaling_factor': current_non_cash / prev_non_cash if prev_non_cash > 0 else 0,
+                'likely_075_multiplier': True
+            })
+    
+    return pd.DataFrame(results)
+
+# Example of how to use with your dataframe:
 """
-Rescale weights in df1 based on ratio patterns in df2.
+# Assuming your dataframe is named 'sp_prims_df'
+detection_results, verification = analyze_sp_prims_multiplier(sp_prims_df)
 
-Rules:
-1. If first ratio is negative: find next positive ratio
-   - Rescale weights for dates (left_date, right_date] (left exclusive, right inclusive)
-2. If first ratio is positive: find next negative ratio  
-   - Rescale weights for dates [left_date, right_date) (left inclusive, right exclusive)
-3. Move to next unused dates after each pair is processed
+# Get dates where 0.75 multiplier was applied
+multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]['date'].tolist()
+print(f"Dates with 0.75 multiplier: {multiplier_dates}")
 
-Args:
-    df1 (DataFrame): Contains 'weight' and 'date' columns
-    df2 (DataFrame): Contains 'ratio' and 'date' columns (subset of df1 dates)
-
-Returns:
-    DataFrame: df1 with new 'rescaled_weight' column
+# Alternative detection method
+alt_detection = detect_multipliers_from_weight_ratios(sp_prims_df)
+print("\nAlternative detection results:")
+print(alt_detection)
 """
-
-# Create a copy to avoid modifying original
-result_df = df1.copy()
-result_df['rescaled_weight'] = result_df['weight']  # Initialize with original weights
-
-# Sort df2 by date to ensure proper sequence
-df2_sorted = df2.sort_values('date').reset_index(drop=True)
-
-# Track which dates have been used
-used_dates = set()
-
-i = 0
-while i < len(df2_sorted):
-    current_date = df2_sorted.loc[i, 'date']
-    current_ratio = df2_sorted.loc[i, 'ratio']
-    
-    # Skip if this date was already used
-    if current_date in used_dates:
-        i += 1
-        continue
-        
-    # Find the next date with opposite sign ratio
-    next_idx = None
-    target_sign = current_ratio > 0  # True if current is positive, False if negative
-    
-    for j in range(i + 1, len(df2_sorted)):
-        next_date = df2_sorted.loc[j, 'date']
-        next_ratio = df2_sorted.loc[j, 'ratio']
-        
-        # Skip already used dates
-        if next_date in used_dates:
-            continue
-            
-        # Check if we found opposite sign
-        if (current_ratio < 0 and next_ratio > 0) or (current_ratio > 0 and next_ratio < 0):
-            next_idx = j
-            break
-    
-    # If we found a pair, apply rescaling
-    if next_idx is not None:
-        left_date = current_date
-        right_date = df2_sorted.loc[next_idx, 'date']
-        
-        # Mark these dates as used
-        used_dates.add(left_date)
-        used_dates.add(right_date)
-        
-        if current_ratio < 0:  # Rule 1: negative first
-            # Left exclusive, right inclusive: (left_date, right_date]
-            mask = (result_df['date'] > left_date) & (result_df['date'] <= right_date)
-        else:  # Rule 2: positive first  
-            # Left inclusive, right exclusive: [left_date, right_date)
-            mask = (result_df['date'] >= left_date) & (result_df['date'] < right_date)
-        
-        # Apply rescaling factor of 4/3
-        result_df.loc[mask, 'rescaled_weight'] *= 4/3
-        
-        print(f"Applied rescaling for dates between {left_date} and {right_date}")
-        print(f"  Current ratio: {current_ratio:.3f} ({'negative' if current_ratio < 0 else 'positive'})")
-        print(f"  Next ratio: {df2_sorted.loc[next_idx, 'ratio']:.3f}")
-        print(f"  Interval: {'(' if current_ratio < 0 else '['}{left_date}, {right_date}{']' if current_ratio < 0 else ')'}")
-        print(f"  Rows affected: {mask.sum()}")
-        print()
-    
-    i += 1
-
-return result_df
-```
-
-# Example usage and test
-
-def create_test_data():
-"""Create sample test data to demonstrate the function"""
-
-
-# Create df1 with daily dates and weights
-dates1 = pd.date_range('2024-01-01', '2024-01-20', freq='D')
-df1 = pd.DataFrame({
-    'date': dates1,
-    'weight': np.random.uniform(10, 50, len(dates1))
-})
-
-# Create df2 with subset of dates and ratios
-dates2 = ['2024-01-03', '2024-01-07', '2024-01-12', '2024-01-16']
-ratios = [-0.5, 0.3, -0.2, 0.7]  # Mix of negative and positive
-
-df2 = pd.DataFrame({
-    'date': pd.to_datetime(dates2),
-    'ratio': ratios
-})
-
-return df1, df2
-```
-
-# Test the function
-
-if **name** == “**main**”:
-# Create test data
-df1, df2 = create_test_data()
-
-
-print("Original df1 (first 10 rows):")
-print(df1.head(10))
-print(f"\ndf1 shape: {df1.shape}")
-
-print("\ndf2 (all rows):")
-print(df2)
-print(f"df2 shape: {df2.shape}")
-
-print("\n" + "="*60)
-print("PROCESSING RATIO PATTERNS")
-print("="*60)
-
-# Apply the rescaling function
-result = rescale_weights_by_ratio_pattern(df1, df2)
-
-print("\nFinal result (showing changes):")
-# Show only rows where rescaling occurred
-changed_mask = result['weight'] != result['rescaled_weight']
-if changed_mask.any():
-    comparison = result[changed_mask][['date', 'weight', 'rescaled_weight']].copy()
-    comparison['change_factor'] = comparison['rescaled_weight'] / comparison['weight']
-    print(comparison)
-else:
-    print("No weights were rescaled.")
-
-print(f"\nTotal rows rescaled: {changed_mask.sum()} out of {len(result)}")
-```
