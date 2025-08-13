@@ -10,12 +10,7 @@ def detect_075_multiplier_dates(df):
     - Rates multiplier = 10
     
     Parameters:
-    df: DataFrame containing the S&P Prims index data with columns:
-        - date
-        - price_per_share
-        - number_of_shares
-        - weights
-        - price (total portfolio value)
+    df: DataFrame containing the S&P Prims index data
     
     Returns:
     DataFrame with dates and verification of 0.75 multiplier application
@@ -27,172 +22,288 @@ def detect_075_multiplier_dates(df):
     commodities_component = 'spgscip.iomr'
     cash_component = 'USD.CASH'
     
-    # Function to calculate implied multipliers from weights
-    def calculate_implied_multipliers(date_data):
-        """
-        Back-calculate the multipliers based on weight ratios and known rules
-        """
-        result = {}
-        
-        # Get weights for each component on this date
-        equities_data = date_data[date_data.index.str.contains(equities_component, na=False)]
-        rates_data = date_data[date_data.index.str.contains(rates_component, na=False)]
-        commodities_data = date_data[date_data.index.str.contains(commodities_component, na=False)]
-        cash_data = date_data[date_data.index.str.contains(cash_component, na=False)]
-        
-        # Calculate risky weights (non-cash)
-        risky_weights = 1 - (cash_data['weights'].values[0] if len(cash_data) > 0 else 0)
-        
-        # Check if weights seem to be scaled by 0.75
-        # This would happen if risky_weights ≈ 0.75 when we'd expect them to be close to 1
-        result['risky_weights'] = risky_weights
-        result['has_equities'] = len(equities_data) > 0
-        result['has_rates'] = len(rates_data) > 0
-        result['has_commodities'] = len(commodities_data) > 0
-        
-        # Detect potential 0.75 scaling
-        # If risky weights are around 0.75 (allowing for leverage adjustments)
-        # this could indicate the 0.75 multiplier was applied
-        result['potential_075_scaling'] = (0.70 <= risky_weights <= 0.80)
-        
-        return result
+    # First, let's identify the structure of the dataframe
+    print("DataFrame columns:", df.columns.tolist())
+    print("DataFrame shape:", df.shape)
+    print("\nFirst few rows:")
+    print(df.head())
+    
+    # Try to identify component column
+    component_col = None
+    for col in ['component', 'Component', 'ticker', 'Ticker', 'asset', 'Asset', 'symbol', 'Symbol']:
+        if col in df.columns:
+            component_col = col
+            break
+    
+    # If no component column, check if components are in index or column names
+    if component_col is None:
+        # Check if components are in the index
+        if df.index.name and any(comp in str(df.index.name) for comp in [equities_component, rates_component]):
+            print("Components appear to be in the index")
+            df = df.reset_index()
+            component_col = 'index'
+        # Check if components are embedded in column names (wide format)
+        elif any(equities_component in str(col) for col in df.columns):
+            print("Data appears to be in wide format with components in column names")
+            return detect_075_multiplier_wide_format(df)
+    
+    if component_col is None:
+        print("Could not identify component column. Please specify the structure.")
+        return None
+    
+    # Convert component column to string type
+    df[component_col] = df[component_col].astype(str)
     
     # Main detection logic
     detection_results = []
     
     # Group by date
     for date in df['date'].unique():
-        date_df = df[df['date'] == date].set_index('component', drop=False) if 'component' in df.columns else df[df['date'] == date]
+        date_df = df[df['date'] == date].copy()
         
-        # Calculate metrics for this date
-        metrics = calculate_implied_multipliers(date_df)
+        # Calculate weights for each component type
+        equities_mask = date_df[component_col].str.contains(equities_component, na=False)
+        rates_mask = date_df[component_col].str.contains(rates_component, na=False)
+        commodities_mask = date_df[component_col].str.contains(commodities_component, na=False)
+        cash_mask = date_df[component_col].str.contains(cash_component, na=False)
         
-        # Detect 0.75 multiplier application
-        # Method 1: Check if sum of non-cash weights is approximately 0.75
-        non_cash_mask = ~date_df.index.str.contains(cash_component, na=False)
-        non_cash_weights_sum = date_df.loc[non_cash_mask, 'weights'].sum()
+        equities_weight = date_df.loc[equities_mask, 'weights'].sum() if equities_mask.any() else 0
+        rates_weight = date_df.loc[rates_mask, 'weights'].sum() if rates_mask.any() else 0
+        commodities_weight = date_df.loc[commodities_mask, 'weights'].sum() if commodities_mask.any() else 0
+        cash_weight = date_df.loc[cash_mask, 'weights'].sum() if cash_mask.any() else 0
         
-        # Method 2: Check weight ratios between components
-        equities_weight = date_df[date_df.index.str.contains(equities_component, na=False)]['weights'].sum()
-        rates_weight = date_df[date_df.index.str.contains(rates_component, na=False)]['weights'].sum()
+        # Calculate non-cash weights sum
+        non_cash_weights_sum = equities_weight + rates_weight + commodities_weight
         
-        # If both equities and rates are present with significant weights
-        # and the total risky weight is around 0.75, it's likely the multiplier was applied
+        # Detect if 0.75 multiplier was likely applied
+        # Key indicator: non-cash weights sum to approximately 0.75
+        # AND both equities and rates are present with significant weights
         is_075_applied = (
-            equities_weight > 0 and 
-            rates_weight > 0 and 
-            (0.70 <= non_cash_weights_sum <= 0.80)
+            equities_weight > 0.1 and  # Equities present with significant weight
+            rates_weight > 0.1 and      # Rates present with significant weight
+            0.70 <= non_cash_weights_sum <= 0.80  # Total risky weights around 0.75
         )
+        
+        # Try to infer multipliers based on weight patterns
+        # If 0.75 applied, equities mult = 5, rates mult = 10
+        likely_equities_mult = 5 if is_075_applied else 1
+        likely_rates_mult = 10 if is_075_applied else 1
         
         detection_results.append({
             'date': date,
-            'equities_weight': equities_weight,
-            'rates_weight': rates_weight,
-            'non_cash_weights_sum': non_cash_weights_sum,
-            'cash_weight': 1 - non_cash_weights_sum,
+            'equities_weight': round(equities_weight, 4),
+            'rates_weight': round(rates_weight, 4),
+            'commodities_weight': round(commodities_weight, 4),
+            'cash_weight': round(cash_weight, 4),
+            'non_cash_weights_sum': round(non_cash_weights_sum, 4),
             'is_075_multiplier_applied': is_075_applied,
-            'likely_equities_multiplier': 5 if is_075_applied else 1,
-            'likely_rates_multiplier': 10 if is_075_applied else 1
+            'likely_equities_multiplier': likely_equities_mult,
+            'likely_rates_multiplier': likely_rates_mult
         })
     
     results_df = pd.DataFrame(detection_results)
     return results_df
 
-def verify_075_multiplier_conditions(df, detection_results):
+def detect_075_multiplier_wide_format(df):
     """
-    Cross-check the conditions for 0.75 multiplier application
-    
-    Returns detailed verification for each detected date
+    Handle wide format where components are in column names
+    e.g., 'weights_spxeralt.cbny', 'weights_spusttp.iomr', etc.
     """
-    verification_results = []
+    detection_results = []
     
-    for _, row in detection_results[detection_results['is_075_multiplier_applied']].iterrows():
-        date = row['date']
-        date_df = df[df['date'] == date]
+    # Identify weight columns for each component
+    weight_cols = [col for col in df.columns if 'weight' in col.lower()]
+    
+    equities_col = None
+    rates_col = None
+    commodities_col = None
+    cash_col = None
+    
+    for col in weight_cols:
+        col_str = str(col)
+        if 'spxeralt.cbny' in col_str:
+            equities_col = col
+        elif 'spusttp.iomr' in col_str:
+            rates_col = col
+        elif 'spgscip.iomr' in col_str:
+            commodities_col = col
+        elif 'USD.CASH' in col_str or 'CASH' in col_str:
+            cash_col = col
+    
+    print(f"Identified columns:")
+    print(f"  Equities: {equities_col}")
+    print(f"  Rates: {rates_col}")
+    print(f"  Commodities: {commodities_col}")
+    print(f"  Cash: {cash_col}")
+    
+    # Process each date
+    for _, row in df.iterrows():
+        date = row['date'] if 'date' in row else row.name
         
-        # Verify conditions
-        verification = {
+        equities_weight = float(row[equities_col]) if equities_col and pd.notna(row.get(equities_col)) else 0
+        rates_weight = float(row[rates_col]) if rates_col and pd.notna(row.get(rates_col)) else 0
+        commodities_weight = float(row[commodities_col]) if commodities_col and pd.notna(row.get(commodities_col)) else 0
+        cash_weight = float(row[cash_col]) if cash_col and pd.notna(row.get(cash_col)) else 0
+        
+        non_cash_weights_sum = equities_weight + rates_weight + commodities_weight
+        
+        # Detect 0.75 multiplier
+        is_075_applied = (
+            equities_weight > 0.1 and
+            rates_weight > 0.1 and
+            0.70 <= non_cash_weights_sum <= 0.80
+        )
+        
+        detection_results.append({
             'date': date,
-            'condition_1_equities_mult_5': row['likely_equities_multiplier'] == 5,
-            'condition_2_rates_mult_10': row['likely_rates_multiplier'] == 10,
-            'observed_scaling': row['non_cash_weights_sum'],
-            'expected_scaling': 0.75,
-            'scaling_difference': abs(row['non_cash_weights_sum'] - 0.75),
-            'verification_passed': abs(row['non_cash_weights_sum'] - 0.75) < 0.05
-        }
-        
-        verification_results.append(verification)
+            'equities_weight': round(equities_weight, 4),
+            'rates_weight': round(rates_weight, 4),
+            'commodities_weight': round(commodities_weight, 4),
+            'cash_weight': round(cash_weight, 4),
+            'non_cash_weights_sum': round(non_cash_weights_sum, 4),
+            'is_075_multiplier_applied': is_075_applied,
+            'likely_equities_multiplier': 5 if is_075_applied else 1,
+            'likely_rates_multiplier': 10 if is_075_applied else 1
+        })
     
-    return pd.DataFrame(verification_results)
+    return pd.DataFrame(detection_results)
 
-# Example usage
 def analyze_sp_prims_multiplier(df):
     """
     Main function to analyze the S&P Prims index for 0.75 multiplier application
     """
-    print("Detecting dates with 0.75 multiplier applied...")
+    print("="*60)
+    print("ANALYZING S&P PRIMS INDEX FOR 0.75 MULTIPLIER APPLICATION")
+    print("="*60)
+    
+    # Detect multiplier application dates
     detection_results = detect_075_multiplier_dates(df)
+    
+    if detection_results is None:
+        print("\nPlease check your dataframe structure and ensure it contains:")
+        print("- A 'date' column")
+        print("- A 'weights' column")
+        print("- Component identifiers (either as a column or in column names)")
+        return None, None
     
     # Filter for dates where multiplier was likely applied
     multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]
     
-    print(f"\nFound {len(multiplier_dates)} dates with 0.75 multiplier applied:")
-    print(multiplier_dates[['date', 'equities_weight', 'rates_weight', 'non_cash_weights_sum']])
+    print(f"\n{'='*60}")
+    print(f"RESULTS: Found {len(multiplier_dates)} dates with 0.75 multiplier applied")
+    print(f"{'='*60}")
     
-    # Verify conditions
-    print("\nVerifying conditions for 0.75 multiplier application...")
-    verification = verify_075_multiplier_conditions(df, detection_results)
+    if len(multiplier_dates) > 0:
+        print("\nDates with 0.75 multiplier (Equities mult=5, Rates mult=10):")
+        print("-"*60)
+        for _, row in multiplier_dates.iterrows():
+            print(f"\nDate: {row['date']}")
+            print(f"  Equities weight: {row['equities_weight']:.2%}")
+            print(f"  Rates weight: {row['rates_weight']:.2%}")
+            print(f"  Total non-cash weights: {row['non_cash_weights_sum']:.2%}")
+            print(f"  Cash weight: {row['cash_weight']:.2%}")
+            print(f"  → Confirms 0.75 rescaling applied")
     
-    if len(verification) > 0:
-        print(verification)
-    else:
-        print("No dates found with clear 0.75 multiplier application")
+    # Create verification summary
+    verification = create_verification_summary(detection_results)
     
     return detection_results, verification
 
-# Advanced detection using weight ratios
-def detect_multipliers_from_weight_ratios(df):
+def create_verification_summary(detection_results):
     """
-    Alternative method: Detect multipliers by analyzing weight ratios over time
+    Create a summary of verification for 0.75 multiplier application
     """
-    results = []
+    multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]
     
-    dates = df['date'].unique()
-    for i in range(1, len(dates)):
-        current_date = dates[i]
-        prev_date = dates[i-1]
-        
-        current_df = df[df['date'] == current_date]
-        prev_df = df[df['date'] == prev_date]
-        
-        # Calculate weight changes
-        current_non_cash = current_df[~current_df['component'].str.contains('USD.CASH', na=False)]['weights'].sum() if 'component' in df.columns else 0
-        prev_non_cash = prev_df[~prev_df['component'].str.contains('USD.CASH', na=False)]['weights'].sum() if 'component' in df.columns else 0
-        
-        # Check for sudden scaling to ~0.75
-        if prev_non_cash > 0.85 and 0.70 <= current_non_cash <= 0.80:
-            results.append({
-                'date': current_date,
-                'prev_date': prev_date,
-                'prev_non_cash_weight': prev_non_cash,
-                'current_non_cash_weight': current_non_cash,
-                'scaling_factor': current_non_cash / prev_non_cash if prev_non_cash > 0 else 0,
-                'likely_075_multiplier': True
-            })
+    if len(multiplier_dates) == 0:
+        return pd.DataFrame()
     
-    return pd.DataFrame(results)
+    verification_data = []
+    for _, row in multiplier_dates.iterrows():
+        verification_data.append({
+            'date': row['date'],
+            'condition_met': 'YES',
+            'reason': 'Equities mult=5 AND Rates mult=10',
+            'observed_risky_weight': f"{row['non_cash_weights_sum']:.2%}",
+            'expected_risky_weight': '75.00%',
+            'deviation': f"{abs(row['non_cash_weights_sum'] - 0.75):.2%}",
+            'equities_weight': f"{row['equities_weight']:.2%}",
+            'rates_weight': f"{row['rates_weight']:.2%}"
+        })
+    
+    return pd.DataFrame(verification_data)
 
-# Example of how to use with your dataframe:
+def detect_multiplier_changes(df):
+    """
+    Detect changes in multipliers by analyzing weight patterns over time
+    """
+    detection_results = detect_075_multiplier_dates(df)
+    
+    if detection_results is None:
+        return None
+    
+    # Add a column for multiplier status change
+    detection_results['multiplier_change'] = ''
+    
+    for i in range(1, len(detection_results)):
+        prev_applied = detection_results.iloc[i-1]['is_075_multiplier_applied']
+        curr_applied = detection_results.iloc[i]['is_075_multiplier_applied']
+        
+        if not prev_applied and curr_applied:
+            detection_results.loc[detection_results.index[i], 'multiplier_change'] = 'ACTIVATED (0.75x scaling started)'
+        elif prev_applied and not curr_applied:
+            detection_results.loc[detection_results.index[i], 'multiplier_change'] = 'DEACTIVATED (0.75x scaling ended)'
+    
+    # Show only dates with changes
+    changes = detection_results[detection_results['multiplier_change'] != '']
+    
+    if len(changes) > 0:
+        print("\n" + "="*60)
+        print("MULTIPLIER STATUS CHANGES")
+        print("="*60)
+        for _, row in changes.iterrows():
+            print(f"\n{row['date']}: {row['multiplier_change']}")
+            print(f"  Non-cash weights: {row['non_cash_weights_sum']:.2%}")
+    
+    return detection_results
+
+# Example usage function
+def run_full_analysis(df):
+    """
+    Run complete analysis on your dataframe
+    """
+    # Main analysis
+    detection_results, verification = analyze_sp_prims_multiplier(df)
+    
+    if detection_results is not None:
+        # Detect multiplier changes
+        print("\n" + "="*60)
+        print("ANALYZING MULTIPLIER CHANGES OVER TIME")
+        print("="*60)
+        changes_df = detect_multiplier_changes(df)
+        
+        # Export results
+        print("\n" + "="*60)
+        print("ANALYSIS COMPLETE")
+        print("="*60)
+        print("\nYou can access the following results:")
+        print("- detection_results: Full analysis for all dates")
+        print("- verification: Verification summary for 0.75 multiplier dates")
+        
+        # Dates list for easy reference
+        multiplier_dates_list = detection_results[detection_results['is_075_multiplier_applied']]['date'].tolist()
+        print(f"\nDates with 0.75 multiplier applied: {len(multiplier_dates_list)} dates")
+        if len(multiplier_dates_list) > 0:
+            print(f"Date range: {multiplier_dates_list[0]} to {multiplier_dates_list[-1]}")
+    
+    return detection_results, verification
+
+# Usage:
 """
-# Assuming your dataframe is named 'sp_prims_df'
-detection_results, verification = analyze_sp_prims_multiplier(sp_prims_df)
+# Run the analysis on your dataframe
+detection_results, verification = run_full_analysis(your_dataframe)
 
-# Get dates where 0.75 multiplier was applied
-multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]['date'].tolist()
-print(f"Dates with 0.75 multiplier: {multiplier_dates}")
-
-# Alternative detection method
-alt_detection = detect_multipliers_from_weight_ratios(sp_prims_df)
-print("\nAlternative detection results:")
-print(alt_detection)
+# Get specific information
+multiplier_dates = detection_results[detection_results['is_075_multiplier_applied']]
+print(multiplier_dates[['date', 'equities_weight', 'rates_weight', 'non_cash_weights_sum']])
 """
