@@ -1,52 +1,54 @@
-import pandas as pd
-import numpy as np
-
-# Assuming your dataframe is called 'df' with columns 'date' and 'applied_leverage'
-# and your time periods list is defined as:
-# time_periods = ['[2022-01-01, 2022-04-01)', '[2022-06-01, 2022-07-15)', ...]
-
-# Ensure date column is datetime
-df['date'] = pd.to_datetime(df['date'])
-
-# Create a copy of the original applied_leverage column
-df['applied_leverage_rescaled'] = df['applied_leverage'].copy()
-
-# Parse and apply rescaling for each time period
-for period in time_periods:
-   # Remove brackets and split by comma
-   period_clean = period.strip('[]()').strip()
-   dates = period_clean.split(',')
-   
-   # Parse start and end dates
-   start_date = pd.to_datetime(dates[0].strip())
-   end_date = pd.to_datetime(dates[1].strip())
-   
-   # Determine inclusivity based on brackets
-   left_inclusive = period[0] == '['
-   right_inclusive = period[-1] == ']'
-   
-   # Create mask for dates within the period
-   if left_inclusive and not right_inclusive:  # [start, end)
-       mask = (df['date'] >= start_date) & (df['date'] < end_date)
-   elif left_inclusive and right_inclusive:  # [start, end]
-       mask = (df['date'] >= start_date) & (df['date'] <= end_date)
-   elif not left_inclusive and right_inclusive:  # (start, end]
-       mask = (df['date'] > start_date) & (df['date'] <= end_date)
-   else:  # (start, end)
-       mask = (df['date'] > start_date) & (df['date'] < end_date)
-   
-   # Apply rescaling to rows within the period
-   df.loc[mask, 'applied_leverage_rescaled'] *= 0.75
-
-# Check the results
-print(f"Original applied_leverage sum: {df['applied_leverage'].sum():.2f}")
-print(f"Rescaled applied_leverage sum: {df['applied_leverage_rescaled'].sum():.2f}")
-
-# View sample of affected rows (optional)
-for period in time_periods[:1]:  # Show first period as example
-   period_clean = period.strip('[]()').strip()
-   dates = period_clean.split(',')
-   start_date = pd.to_datetime(dates[0].strip())
-   
-   print(f"\nSample rows from period {period}:")
-   display(df[df['date'] >= start_date].head(5)[['date', 'applied_leverage', 'applied_leverage_rescaled']])
+    def calculate_with_leverage(self,
+                               df: pd.DataFrame,
+                               target_volatility: float = 0.055,  # Default 5.5%
+                               max_leverage: float = 1.0,  # Default 100%
+                               lag_days: int = 2,
+                               T0_date: Optional[str] = None) -> pd.DataFrame:
+        """
+        Calculate realized volatility and leveraged weights.
+        
+        Leveraged weight on date t = min(max_leverage, target_volatility / realized_vol_{t-lag_days})
+        where lag_days refers to trading days (not calendar days) in the 'date' column.
+        
+        Parameters:
+        -----------
+        df : pd.DataFrame
+            DataFrame with portfolio data
+        target_volatility : float
+            Target volatility level (e.g., 0.055 for 5.5%)
+        max_leverage : float
+            Maximum allowed leverage/weight (e.g., 1.0 for 100%)
+        lag_days : int
+            Number of trading days lag for volatility (default 2 means use vol from t-2)
+        T0_date : str, optional
+            Start date for the index
+        
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame with columns: date, short_term_vol, long_term_vol, realized_vol, 
+            leveraged_weight
+        """
+        # Calculate realized volatility
+        vol_df = self.calculate_realized_volatility(df, T0_date)
+        
+        # Shift realized volatility by lag_days to get vol_{t-lag_days}
+        # This gives us the volatility from lag_days trading days ago
+        vol_df['lagged_realized_vol'] = vol_df['realized_vol'].shift(lag_days)
+        
+        # Calculate leveraged weight for date t using vol from t-lag_days
+        # leveraged_weight_t = min(max_leverage, target_volatility / realized_vol_{t-lag_days})
+        vol_df['leveraged_weight'] = target_volatility / vol_df['lagged_realized_vol']
+        vol_df['leveraged_weight'] = vol_df['leveraged_weight'].clip(upper=max_leverage)
+        
+        # Fill initial NaN values (first lag_days rows) with max_leverage
+        vol_df['leveraged_weight'] = vol_df['leveraged_weight'].fillna(max_leverage)
+        
+        # Add informational columns
+        vol_df['target_vol'] = target_volatility
+        vol_df['max_leverage'] = max_leverage
+        
+        # Drop the temporary lagged column if you want cleaner output
+        vol_df = vol_df.drop(columns=['lagged_realized_vol'])
+        
+        return vol_df
