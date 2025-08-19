@@ -55,13 +55,13 @@ def rescale_weights_by_ratio_pattern(df1, df2,
             if current_ratio < 0: # Rule 1: negative first
                 # Left exclusive, right inclusive: (left_date, right_date]
                 mask = (result_df[date_col] > left_date) & (result_df[date_col] <= right_date)
-                # Add all df2 dates in the interval (left_date, right_date] to used_dates
-                df2_interval_mask = (df2_sorted[date_col] > left_date) & (df2_sorted[date_col] <= right_date)
+                # Add all df2 dates STRICTLY between endpoints: (left_date, right_date)
+                df2_interval_mask = (df2_sorted[date_col] > left_date) & (df2_sorted[date_col] < right_date)
             else: # Rule 2; positive first
                 # Left inclusive, right exclusive: [left_date, right_date)
                 mask = (result_df[date_col] >= left_date) & (result_df[date_col] < right_date)
-                # Add all df2 dates in the interval [left_date, right_date) to used_dates
-                df2_interval_mask = (df2_sorted[date_col] >= left_date) & (df2_sorted[date_col] < right_date)
+                # Add all df2 dates STRICTLY between endpoints: (left_date, right_date)
+                df2_interval_mask = (df2_sorted[date_col] > left_date) & (df2_sorted[date_col] < right_date)
             # Add all df2 dates within the interval to used_dates
             dates_in_interval = df2_sorted.loc[df2_interval_mask, date_col].tolist()
             used_dates.update(dates_in_interval)
