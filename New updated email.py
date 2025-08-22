@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -291,7 +291,7 @@ def send_breach_email(
     
     # Create message
     msg = MIMEMultipart()
-    msg['Subject'] = f"Index Breach Alert - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    msg['Subject'] = f"Index Breach Alert - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
     msg['From'] = email_config['sender']
     msg['To'] = ', '.join(email_config['recipients'])
     
@@ -338,7 +338,7 @@ def send_breach_email(
         encoders.encode_base64(excel_part)
         excel_part.add_header(
             'Content-Disposition',
-            f'attachment; filename="breach_summary_{datetime.now().strftime("%Y%m%d")}.xlsx"'
+            f'attachment; filename="breach_summary_{datetime.datetime.now().strftime("%Y%m%d")}.xlsx"'
         )
         msg.attach(excel_part)
     
@@ -374,27 +374,30 @@ def create_html_email_content(df: pd.DataFrame) -> str:
     # Count total breaches (some indices may have multiple breaches)
     total_breaches = df['Breach Types'].str.count('\|').sum() + len(df)
     
-    html = """
+    # Convert DataFrame to HTML with simple styling
+    table_html = df.to_html(index=False, escape=False)
+    
+    html = f"""
     <html>
     <head>
         <style>
-            body { font-family: Arial, sans-serif; }
-            h2 { color: #2c3e50; }
-            table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-            th { background-color: #3498db; color: white; padding: 12px; text-align: left; }
-            td { padding: 10px; border-bottom: 1px solid #ddd; font-size: 12px; }
-            tr:hover { background-color: #f5f5f5; }
-            .alert { color: #e74c3c; font-weight: bold; }
-            .summary { background-color: #ecf0f1; padding: 15px; border-radius: 5px; margin: 10px 0; }
-            .breach-types { color: #e74c3c; font-weight: bold; }
-            .multiple-breaches { background-color: #fff3cd; }
+            body {{ font-family: Arial, sans-serif; }}
+            h2 {{ color: #2c3e50; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+            th {{ background-color: #3498db; color: white; padding: 12px; text-align: left; }}
+            td {{ padding: 10px; border-bottom: 1px solid #ddd; font-size: 12px; }}
+            tr:hover {{ background-color: #f5f5f5; }}
+            .alert {{ color: #e74c3c; font-weight: bold; }}
+            .summary {{ background-color: #ecf0f1; padding: 15px; border-radius: 5px; margin: 10px 0; }}
+            .breach-types {{ color: #e74c3c; font-weight: bold; }}
+            .multiple-breaches {{ background-color: #fff3cd; }}
         </style>
     </head>
     <body>
-        <h2>📊 Index Breach Alert Report</h2>
+        <h2>Index Breach Alert Report</h2>
         <div class="summary">
-            <p><strong>Report Generated:</strong> {timestamp}</p>
-            <p><strong>Total Indices with Breaches:</strong> {num_indices}</p>
+            <p><strong>Report Generated:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p><strong>Total Indices with Breaches:</strong> {len(df)}</p>
             <p><strong>Total Breaches Detected:</strong> {total_breaches}</p>
         </div>
         
@@ -408,12 +411,7 @@ def create_html_email_content(df: pd.DataFrame) -> str:
         </div>
     </body>
     </html>
-    """.format(
-        timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        num_indices=len(df),
-        total_breaches=total_breaches,
-        table_html=df.to_html(index=False, escape=False, classes='breach-table')
-    )
+    """
     
     return html
 
