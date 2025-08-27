@@ -145,3 +145,30 @@ def find_closest_column(
             print(f"  All distances: {', '.join([f'{k}:{v:.6f}' for k, v in details['all_distances'].items()])}")
     
     return result_df, error_dates, error_details
+
+
+
+# Create error check DataFrame
+error_check_df = pd.DataFrame({'date': rate_error_dates})
+
+# Merge equity weights
+error_check_df = error_check_df.merge(
+    equity_df[['date', 'weight', 'normalized_weight']], 
+    on='date', 
+    how='left'
+)
+
+# Add closest column info from error details dictionary
+error_check_df['closest_column'] = error_check_df['date'].map(
+    lambda d: equity_error_details.get(d, {}).get('closest')
+)
+error_check_df['distance'] = error_check_df['date'].map(
+    lambda d: equity_error_details.get(d, {}).get('distance')
+)
+
+# Get the value from the closest column
+error_check_df['closest_column_value'] = error_check_df.apply(
+    lambda row: equity_df.loc[equity_df['date'] == row['date'], row['closest_column']].values[0] 
+    if pd.notna(row['closest_column']) else None, 
+    axis=1
+)
