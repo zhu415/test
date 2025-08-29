@@ -3,14 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-def calculate_volatilities(df):
+def calculate_volatilities(df, window=90):
     """
-    Calculate 90-day volatility using three different methods.
+    Calculate N-day volatility using three different methods.
     
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame with 'date' and 'price_per_share' columns
+    window : int
+        Rolling window size (default: 90)
     
     Returns:
     --------
@@ -39,87 +41,86 @@ def calculate_volatilities(df):
     returns = df['return'].values
     annualization_factor = np.sqrt(252)  # Assuming 252 trading days per year
     
-    # Method 1: Recursive calculation with P_t and Q_t (Exact 90-day)
-    window_90 = 90
-    if n >= window_90:
-        # First window (indices 0 to 89)
-        P = np.sum(returns[0:window_90])
-        Q = np.sum(returns[0:window_90]**2)
+    # Method 1: Recursive calculation with P_t and Q_t (Exact N-day)
+    if n >= window:
+        # First window
+        P = np.sum(returns[0:window])
+        Q = np.sum(returns[0:window]**2)
         
         # Calculate variance and volatility for first window
-        variance = (Q - P**2/window_90) / (window_90 - 1)
+        variance = (Q - P**2/window) / (window - 1)
         if variance > 0:
-            vol_method1[window_90-1] = np.sqrt(variance) * annualization_factor
+            vol_method1[window-1] = np.sqrt(variance) * annualization_factor
         
         # Recursive updates for subsequent windows
-        for t in range(window_90, n):
+        for t in range(window, n):
             # Update P and Q recursively
-            P = P - returns[t-window_90] + returns[t]
-            Q = Q - returns[t-window_90]**2 + returns[t]**2
+            P = P - returns[t-window] + returns[t]
+            Q = Q - returns[t-window]**2 + returns[t]**2
             
             # Calculate variance and volatility
-            variance = (Q - P**2/window_90) / (window_90 - 1)
+            variance = (Q - P**2/window) / (window - 1)
             if variance > 0:
                 vol_method1[t] = np.sqrt(variance) * annualization_factor
     
-    # Method 2: Approximation with 91-day data
-    # Sum of (r_i - avg_90)^2 for i=1,...,90 plus r_0^2
-    window_91 = 91
-    if n >= window_91:
-        for t in range(window_91-1, n):
-            # Get 91 days of returns (indices t-90 to t)
-            returns_91 = returns[t-90:t+1]
+    # Method 2: Approximation with (N+1)-day data
+    # Sum of (r_i - avg_N)^2 for i=1,...,N plus r_0^2
+    window_NPlus1 = window + 1
+    if n >= window_NPlus1:
+        for t in range(window_NPlus1-1, n):
+            # Get (N+1) days of returns
+            returns_NPlus1 = returns[t-window:t+1]
             
-            # Calculate 90-day average (excluding r_0)
-            avg_90 = np.mean(returns_91[1:])
+            # Calculate N-day average (excluding r_0)
+            avg_N = np.mean(returns_NPlus1[1:])
             
             # Calculate sum of squares
-            sum_sq = np.sum((returns_91[1:] - avg_90)**2) + returns_91[0]**2
+            sum_sq = np.sum((returns_NPlus1[1:] - avg_N)**2) + returns_NPlus1[0]**2
             
             # Calculate variance and volatility
-            variance = sum_sq / (window_90 - 1)
+            variance = sum_sq / (window - 1)
             if variance > 0:
                 vol_method2[t] = np.sqrt(variance) * annualization_factor
     
-    # Method 3: New approximation using 89-day volatility
-    # σ_90,t ≈ σ_89,t * (1 + 0.5 * (VarRatio - 1) / 89)
-    # where VarRatio = 252 * (r_{t-89} - μ_89,t)^2 / σ_89,t^2
-    window_89 = 89
+    # Method 3: New approximation using (N-1)-day volatility
+    # σ_N,t ≈ σ_{N-1},t * (1 + 0.5 * (VarRatio - 1) / (N-1))
+    # where VarRatio = 252 * (r_{t-(N-1)} - μ_{N-1},t)^2 / σ_{N-1},t^2
+    window_NMinus1 = window - 1
     
-    if n >= window_90:  # Need at least 90 days for this calculation
-        for t in range(window_90-1, n):
-            # Get the most recent 89 days (excluding the oldest return r_{t-89})
-            returns_89 = returns[t-88:t+1]  # indices from t-88 to t (89 values)
+    if n >= window:  # Need at least N days for this calculation
+        for t in range(window-1, n):
+            # Get the most recent (N-1) days (excluding the oldest return)
+            returns_NMinus1 = returns[t-window_NMinus1+1:t+1]  # (N-1) values
             
-            # Calculate 89-day mean and variance
-            mu_89 = np.mean(returns_89)
-            variance_89 = np.sum((returns_89 - mu_89)**2) / (window_89 - 1)
+            # Calculate (N-1)-day mean and variance
+            mu_NMinus1 = np.mean(returns_NMinus1)
+            variance_NMinus1 = np.sum((returns_NMinus1 - mu_NMinus1)**2) / (window_NMinus1 - 1)
             
-            if variance_89 > 0:
-                # Calculate annualized 89-day variance and volatility
-                variance_89_annualized = variance_89 * 252
-                sigma_89_annualized = np.sqrt(variance_89_annualized)
+            if variance_NMinus1 > 0:
+                # Calculate annualized (N-1)-day variance and volatility
+                variance_NMinus1_annualized = variance_NMinus1 * 252
+                sigma_NMinus1_annualized = np.sqrt(variance_NMinus1_annualized)
                 
-                # Get the dropped return (r_{t-89})
-                r_dropped = returns[t-89]
+                # Get the dropped return (r_{t-(N-1)})
+                r_dropped = returns[t-window_NMinus1]
                 
                 # Calculate VarRatio
-                var_ratio = 252 * (r_dropped - mu_89)**2 / variance_89_annualized
+                var_ratio = 252 * (r_dropped - mu_NMinus1)**2 / variance_NMinus1_annualized
                 
                 # Apply the approximation formula
-                sigma_90_approx = sigma_89_annualized * (1 + 0.5 * (var_ratio - 1) / 89)
+                sigma_N_approx = sigma_NMinus1_annualized * (1 + 0.5 * (var_ratio - 1) / window_NMinus1)
                 
                 # Store the result
-                vol_method3[t] = sigma_90_approx
+                vol_method3[t] = sigma_N_approx
     
-    # Store results
-    results['vol_method1_exact_90'] = vol_method1
-    results['vol_method2_approx_91day'] = vol_method2
-    results['vol_method3_approx_89day'] = vol_method3
+    # Store results with dynamic column names
+    results[f'vol_method1_exact_{window}day'] = vol_method1
+    results[f'vol_method2_approx_{window+1}day'] = vol_method2
+    results[f'vol_method3_approx_{window-1}day'] = vol_method3
     
     return results
 
-def plot_volatilities(results):
+def plot_volatilities(results, window=90):
     """
     Plot the three volatility methods for comparison.
     
@@ -127,23 +128,30 @@ def plot_volatilities(results):
     -----------
     results : pd.DataFrame
         DataFrame with date and volatility calculations
+    window : int
+        Rolling window size (default: 90)
     """
+    
+    # Get column names dynamically
+    col_method1 = f'vol_method1_exact_{window}day'
+    col_method2 = f'vol_method2_approx_{window+1}day'
+    col_method3 = f'vol_method3_approx_{window-1}day'
     
     # Create figure with subplots
     fig, axes = plt.subplots(3, 1, figsize=(12, 12))
     
     # Plot 1: All three methods together
     ax1 = axes[0]
-    ax1.plot(results['date'], results['vol_method1_exact_90'], 
-             label='Method 1: Exact 90-day (Recursive)', alpha=0.8, linewidth=1.5, color='blue')
-    ax1.plot(results['date'], results['vol_method2_approx_91day'], 
-             label='Method 2: Approximation (91-day data)', alpha=0.8, linewidth=1.5, color='orange')
-    ax1.plot(results['date'], results['vol_method3_approx_89day'], 
-             label='Method 3: Approximation (89-day based)', alpha=0.8, linewidth=1.5, color='green')
+    ax1.plot(results['date'], results[col_method1], 
+             label=f'Method 1: Exact {window}-day (Recursive)', alpha=0.8, linewidth=1.5, color='blue')
+    ax1.plot(results['date'], results[col_method2], 
+             label=f'Method 2: Approximation ({window+1}-day data)', alpha=0.8, linewidth=1.5, color='orange')
+    ax1.plot(results['date'], results[col_method3], 
+             label=f'Method 3: Approximation ({window-1}-day based)', alpha=0.8, linewidth=1.5, color='green')
     
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Annualized Volatility')
-    ax1.set_title('90-Day Rolling Volatility Comparison')
+    ax1.set_title(f'{window}-Day Rolling Volatility Comparison')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
@@ -151,13 +159,13 @@ def plot_volatilities(results):
     ax2 = axes[1]
     
     # Calculate differences relative to Method 1 (exact)
-    diff_2_1 = results['vol_method2_approx_91day'] - results['vol_method1_exact_90']
-    diff_3_1 = results['vol_method3_approx_89day'] - results['vol_method1_exact_90']
+    diff_2_1 = results[col_method2] - results[col_method1]
+    diff_3_1 = results[col_method3] - results[col_method1]
     
     ax2.plot(results['date'], diff_2_1, 
-             label='Method 2 vs Method 1 (91-day approx error)', alpha=0.8, linewidth=1.5, color='orange')
+             label=f'Method 2 vs Method 1 ({window+1}-day approx error)', alpha=0.8, linewidth=1.5, color='orange')
     ax2.plot(results['date'], diff_3_1, 
-             label='Method 3 vs Method 1 (89-day approx error)', alpha=0.8, linewidth=1.5, color='green')
+             label=f'Method 3 vs Method 1 ({window-1}-day approx error)', alpha=0.8, linewidth=1.5, color='green')
     
     ax2.set_xlabel('Date')
     ax2.set_ylabel('Volatility Difference')
@@ -170,8 +178,8 @@ def plot_volatilities(results):
     ax3 = axes[2]
     
     # Calculate percentage errors
-    pct_error_2 = 100 * diff_2_1 / results['vol_method1_exact_90']
-    pct_error_3 = 100 * diff_3_1 / results['vol_method1_exact_90']
+    pct_error_2 = 100 * diff_2_1 / results[col_method1]
+    pct_error_3 = 100 * diff_3_1 / results[col_method1]
     
     ax3.plot(results['date'], pct_error_2, 
              label='Method 2 % error', alpha=0.8, linewidth=1.5, color='orange')
@@ -189,18 +197,18 @@ def plot_volatilities(results):
     plt.show()
     
     # Print statistics
-    print("\n=== Volatility Statistics ===")
-    print("\nMethod 1 (Exact 90-day Recursive):")
-    print(f"  Mean: {results['vol_method1_exact_90'].mean():.4f}")
-    print(f"  Std:  {results['vol_method1_exact_90'].std():.4f}")
+    print(f"\n=== {window}-Day Volatility Statistics ===")
+    print(f"\nMethod 1 (Exact {window}-day Recursive):")
+    print(f"  Mean: {results[col_method1].mean():.4f}")
+    print(f"  Std:  {results[col_method1].std():.4f}")
     
-    print("\nMethod 2 (Approximation with 91-day data):")
-    print(f"  Mean: {results['vol_method2_approx_91day'].mean():.4f}")
-    print(f"  Std:  {results['vol_method2_approx_91day'].std():.4f}")
+    print(f"\nMethod 2 (Approximation with {window+1}-day data):")
+    print(f"  Mean: {results[col_method2].mean():.4f}")
+    print(f"  Std:  {results[col_method2].std():.4f}")
     
-    print("\nMethod 3 (Approximation using 89-day vol):")
-    print(f"  Mean: {results['vol_method3_approx_89day'].mean():.4f}")
-    print(f"  Std:  {results['vol_method3_approx_89day'].std():.4f}")
+    print(f"\nMethod 3 (Approximation using {window-1}-day vol):")
+    print(f"  Mean: {results[col_method3].mean():.4f}")
+    print(f"  Std:  {results[col_method3].std():.4f}")
     
     print("\n=== Approximation Error Statistics ===")
     print(f"Method 2 - Max absolute error: {np.nanmax(np.abs(diff_2_1)):.6f}")
@@ -251,18 +259,31 @@ if __name__ == "__main__":
     # Create sample data (replace with your actual dataframe)
     df = create_sample_data(500)
     
-    print("Calculating volatilities using three methods...")
-    results = calculate_volatilities(df)
+    # You can now specify different window sizes
+    window_size = 90  # Change this to any value you want
+    
+    print(f"Calculating {window_size}-day volatilities using three methods...")
+    results = calculate_volatilities(df, window=window_size)
     
     print("Plotting results...")
-    fig = plot_volatilities(results)
+    fig = plot_volatilities(results, window=window_size)
     
     # Display sample of results including all methods
-    print("\n=== Sample Results (rows 90-100) ===")
-    display_cols = ['date', 'vol_method1_exact_90', 'vol_method2_approx_91day', 'vol_method3_approx_89day']
-    print(results[display_cols].iloc[90:101].to_string())
+    print(f"\n=== Sample Results (rows {window_size}-{window_size+10}) ===")
+    display_cols = ['date'] + [col for col in results.columns if 'vol_method' in col]
+    print(results[display_cols].iloc[window_size:window_size+11].to_string())
     
     # Check correlation between methods
     print("\n=== Correlation Matrix ===")
-    corr_matrix = results[['vol_method1_exact_90', 'vol_method2_approx_91day', 'vol_method3_approx_89day']].corr()
+    vol_cols = [col for col in results.columns if 'vol_method' in col]
+    corr_matrix = results[vol_cols].corr()
     print(corr_matrix)
+    
+    # Example: Try different window sizes
+    print("\n" + "="*60)
+    print("Testing with different window sizes...")
+    for test_window in [30, 60, 90, 120]:
+        print(f"\n--- Window size: {test_window} days ---")
+        test_results = calculate_volatilities(df, window=test_window)
+        col1 = f'vol_method1_exact_{test_window}day'
+        print(f"Mean volatility (exact): {test_results[col1].mean():.4f}")
