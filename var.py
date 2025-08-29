@@ -29,10 +29,6 @@ def calculate_volatilities(df):
     results = pd.DataFrame()
     results['date'] = df['date']
     
-    # Method 1: Exact 90-day volatility with recursive formula
-    window = 90
-    annualization_factor = np.sqrt(252)  # Assuming 252 trading days per year
-    
     # Initialize arrays for storing results
     n = len(df)
     vol_method1 = np.full(n, np.nan)
@@ -41,27 +37,28 @@ def calculate_volatilities(df):
     
     # Pre-compute returns array for easier indexing
     returns = df['return'].values
+    annualization_factor = np.sqrt(252)  # Assuming 252 trading days per year
     
-    # Method 1: Recursive calculation with P_t and Q_t
-    # Initialize P and Q for the first window
-    if n >= window:
+    # Method 1: Recursive calculation with P_t and Q_t (Exact 90-day)
+    window_90 = 90
+    if n >= window_90:
         # First window (indices 0 to 89)
-        P = np.sum(returns[0:window])
-        Q = np.sum(returns[0:window]**2)
+        P = np.sum(returns[0:window_90])
+        Q = np.sum(returns[0:window_90]**2)
         
         # Calculate variance and volatility for first window
-        variance = (Q - P**2/window) / (window - 1)
+        variance = (Q - P**2/window_90) / (window_90 - 1)
         if variance > 0:
-            vol_method1[window-1] = np.sqrt(variance) * annualization_factor
+            vol_method1[window_90-1] = np.sqrt(variance) * annualization_factor
         
         # Recursive updates for subsequent windows
-        for t in range(window, n):
+        for t in range(window_90, n):
             # Update P and Q recursively
-            P = P - returns[t-window] + returns[t]
-            Q = Q - returns[t-window]**2 + returns[t]**2
+            P = P - returns[t-window_90] + returns[t]
+            Q = Q - returns[t-window_90]**2 + returns[t]**2
             
             # Calculate variance and volatility
-            variance = (Q - P**2/window) / (window - 1)
+            variance = (Q - P**2/window_90) / (window_90 - 1)
             if variance > 0:
                 vol_method1[t] = np.sqrt(variance) * annualization_factor
     
@@ -80,28 +77,45 @@ def calculate_volatilities(df):
             sum_sq = np.sum((returns_91[1:] - avg_90)**2) + returns_91[0]**2
             
             # Calculate variance and volatility
-            variance = sum_sq / (window - 1)
+            variance = sum_sq / (window_90 - 1)
             if variance > 0:
                 vol_method2[t] = np.sqrt(variance) * annualization_factor
     
-    # Method 3: Exact calculation with standard formula
-    # Sum of (r_i - avg_90)^2 for i=0,...,89
-    if n >= window:
-        for t in range(window-1, n):
-            # Get 90 days of returns (indices t-89 to t)
-            returns_90 = returns[t-89:t+1]
+    # Method 3: New approximation using 89-day volatility
+    # σ_90,t ≈ σ_89,t * (1 + 0.5 * (VarRatio - 1) / 89)
+    # where VarRatio = 252 * (r_{t-89} - μ_89,t)^2 / σ_89,t^2
+    window_89 = 89
+    
+    if n >= window_90:  # Need at least 90 days for this calculation
+        for t in range(window_90-1, n):
+            # Get the most recent 89 days (excluding the oldest return r_{t-89})
+            returns_89 = returns[t-88:t+1]  # indices from t-88 to t (89 values)
             
-            # Calculate mean and variance
-            avg_90 = np.mean(returns_90)
-            variance = np.sum((returns_90 - avg_90)**2) / (window - 1)
+            # Calculate 89-day mean and variance
+            mu_89 = np.mean(returns_89)
+            variance_89 = np.sum((returns_89 - mu_89)**2) / (window_89 - 1)
             
-            if variance > 0:
-                vol_method3[t] = np.sqrt(variance) * annualization_factor
+            if variance_89 > 0:
+                # Calculate annualized 89-day variance and volatility
+                variance_89_annualized = variance_89 * 252
+                sigma_89_annualized = np.sqrt(variance_89_annualized)
+                
+                # Get the dropped return (r_{t-89})
+                r_dropped = returns[t-89]
+                
+                # Calculate VarRatio
+                var_ratio = 252 * (r_dropped - mu_89)**2 / variance_89_annualized
+                
+                # Apply the approximation formula
+                sigma_90_approx = sigma_89_annualized * (1 + 0.5 * (var_ratio - 1) / 89)
+                
+                # Store the result
+                vol_method3[t] = sigma_90_approx
     
     # Store results
-    results['vol_method1_recursive'] = vol_method1
-    results['vol_method2_approx'] = vol_method2
-    results['vol_method3_exact'] = vol_method3
+    results['vol_method1_exact_90'] = vol_method1
+    results['vol_method2_approx_91day'] = vol_method2
+    results['vol_method3_approx_89day'] = vol_method3
     
     return results
 
@@ -116,16 +130,16 @@ def plot_volatilities(results):
     """
     
     # Create figure with subplots
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
     
     # Plot 1: All three methods together
     ax1 = axes[0]
-    ax1.plot(results['date'], results['vol_method1_recursive'], 
-             label='Method 1: Recursive (Exact)', alpha=0.8, linewidth=1.5)
-    ax1.plot(results['date'], results['vol_method2_approx'], 
-             label='Method 2: Approximation (91-day)', alpha=0.8, linewidth=1.5)
-    ax1.plot(results['date'], results['vol_method3_exact'], 
-             label='Method 3: Standard Exact', alpha=0.8, linewidth=1.5)
+    ax1.plot(results['date'], results['vol_method1_exact_90'], 
+             label='Method 1: Exact 90-day (Recursive)', alpha=0.8, linewidth=1.5, color='blue')
+    ax1.plot(results['date'], results['vol_method2_approx_91day'], 
+             label='Method 2: Approximation (91-day data)', alpha=0.8, linewidth=1.5, color='orange')
+    ax1.plot(results['date'], results['vol_method3_approx_89day'], 
+             label='Method 3: Approximation (89-day based)', alpha=0.8, linewidth=1.5, color='green')
     
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Annualized Volatility')
@@ -133,45 +147,76 @@ def plot_volatilities(results):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Plot 2: Differences between methods
+    # Plot 2: Differences between approximations and exact method
     ax2 = axes[1]
     
-    # Calculate differences
-    diff_1_3 = results['vol_method1_recursive'] - results['vol_method3_exact']
-    diff_2_3 = results['vol_method2_approx'] - results['vol_method3_exact']
+    # Calculate differences relative to Method 1 (exact)
+    diff_2_1 = results['vol_method2_approx_91day'] - results['vol_method1_exact_90']
+    diff_3_1 = results['vol_method3_approx_89day'] - results['vol_method1_exact_90']
     
-    ax2.plot(results['date'], diff_1_3, 
-             label='Method 1 vs Method 3 (should be ~0)', alpha=0.8, linewidth=1.5)
-    ax2.plot(results['date'], diff_2_3, 
-             label='Method 2 vs Method 3 (approximation error)', alpha=0.8, linewidth=1.5)
+    ax2.plot(results['date'], diff_2_1, 
+             label='Method 2 vs Method 1 (91-day approx error)', alpha=0.8, linewidth=1.5, color='orange')
+    ax2.plot(results['date'], diff_3_1, 
+             label='Method 3 vs Method 1 (89-day approx error)', alpha=0.8, linewidth=1.5, color='green')
     
     ax2.set_xlabel('Date')
     ax2.set_ylabel('Volatility Difference')
-    ax2.set_title('Differences Between Methods (Relative to Method 3)')
+    ax2.set_title('Approximation Errors (Relative to Exact Method 1)')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     ax2.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+    
+    # Plot 3: Percentage errors
+    ax3 = axes[2]
+    
+    # Calculate percentage errors
+    pct_error_2 = 100 * diff_2_1 / results['vol_method1_exact_90']
+    pct_error_3 = 100 * diff_3_1 / results['vol_method1_exact_90']
+    
+    ax3.plot(results['date'], pct_error_2, 
+             label='Method 2 % error', alpha=0.8, linewidth=1.5, color='orange')
+    ax3.plot(results['date'], pct_error_3, 
+             label='Method 3 % error', alpha=0.8, linewidth=1.5, color='green')
+    
+    ax3.set_xlabel('Date')
+    ax3.set_ylabel('Percentage Error (%)')
+    ax3.set_title('Relative Approximation Errors')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    ax3.axhline(y=0, color='black', linestyle='--', alpha=0.5)
     
     plt.tight_layout()
     plt.show()
     
     # Print statistics
     print("\n=== Volatility Statistics ===")
-    print("\nMethod 1 (Recursive Exact):")
-    print(f"  Mean: {results['vol_method1_recursive'].mean():.4f}")
-    print(f"  Std:  {results['vol_method1_recursive'].std():.4f}")
+    print("\nMethod 1 (Exact 90-day Recursive):")
+    print(f"  Mean: {results['vol_method1_exact_90'].mean():.4f}")
+    print(f"  Std:  {results['vol_method1_exact_90'].std():.4f}")
     
-    print("\nMethod 2 (Approximation with 91 days):")
-    print(f"  Mean: {results['vol_method2_approx'].mean():.4f}")
-    print(f"  Std:  {results['vol_method2_approx'].std():.4f}")
+    print("\nMethod 2 (Approximation with 91-day data):")
+    print(f"  Mean: {results['vol_method2_approx_91day'].mean():.4f}")
+    print(f"  Std:  {results['vol_method2_approx_91day'].std():.4f}")
     
-    print("\nMethod 3 (Standard Exact):")
-    print(f"  Mean: {results['vol_method3_exact'].mean():.4f}")
-    print(f"  Std:  {results['vol_method3_exact'].std():.4f}")
+    print("\nMethod 3 (Approximation using 89-day vol):")
+    print(f"  Mean: {results['vol_method3_approx_89day'].mean():.4f}")
+    print(f"  Std:  {results['vol_method3_approx_89day'].std():.4f}")
     
-    print("\n=== Method Comparison ===")
-    print(f"Max absolute difference Method 1 vs 3: {np.nanmax(np.abs(diff_1_3)):.6f}")
-    print(f"Max absolute difference Method 2 vs 3: {np.nanmax(np.abs(diff_2_3)):.6f}")
+    print("\n=== Approximation Error Statistics ===")
+    print(f"Method 2 - Max absolute error: {np.nanmax(np.abs(diff_2_1)):.6f}")
+    print(f"Method 2 - Mean absolute error: {np.nanmean(np.abs(diff_2_1)):.6f}")
+    print(f"Method 2 - RMSE: {np.sqrt(np.nanmean(diff_2_1**2)):.6f}")
+    
+    print(f"\nMethod 3 - Max absolute error: {np.nanmax(np.abs(diff_3_1)):.6f}")
+    print(f"Method 3 - Mean absolute error: {np.nanmean(np.abs(diff_3_1)):.6f}")
+    print(f"Method 3 - RMSE: {np.sqrt(np.nanmean(diff_3_1**2)):.6f}")
+    
+    print("\n=== Percentage Error Statistics ===")
+    print(f"Method 2 - Mean % error: {np.nanmean(pct_error_2):.4f}%")
+    print(f"Method 2 - Std % error: {np.nanstd(pct_error_2):.4f}%")
+    
+    print(f"\nMethod 3 - Mean % error: {np.nanmean(pct_error_3):.4f}%")
+    print(f"Method 3 - Std % error: {np.nanstd(pct_error_3):.4f}%")
     
     return fig
 
@@ -212,6 +257,12 @@ if __name__ == "__main__":
     print("Plotting results...")
     fig = plot_volatilities(results)
     
-    # Display first few rows of results
-    print("\n=== First 95 rows of results ===")
-    print(results[['date', 'vol_method1_recursive', 'vol_method2_approx', 'vol_method3_exact']].head(95))
+    # Display sample of results including all methods
+    print("\n=== Sample Results (rows 90-100) ===")
+    display_cols = ['date', 'vol_method1_exact_90', 'vol_method2_approx_91day', 'vol_method3_approx_89day']
+    print(results[display_cols].iloc[90:101].to_string())
+    
+    # Check correlation between methods
+    print("\n=== Correlation Matrix ===")
+    corr_matrix = results[['vol_method1_exact_90', 'vol_method2_approx_91day', 'vol_method3_approx_89day']].corr()
+    print(corr_matrix)
