@@ -142,3 +142,33 @@ try {
     // Optionally throw if you want to stop on file write errors:
     // throw new AMGException("Failed to write weights history: " + e.getMessage());
 }
+
+
+
+// Minimal test - write to current directory with simple name
+try {
+    // Create a very simple file in current directory
+    java.io.FileWriter fw = new java.io.FileWriter("WEIGHTS_TEST.txt", true);
+    fw.write("Date: " + valDate.toString() + "\n");
+    fw.write("Weights count: " + todaysRebalanceResult.myWeights.length + "\n");
+    for (int i = 0; i &lt; todaysRebalanceResult.myWeights.length; i++) {
+        fw.write("Weight " + i + ": " + todaysRebalanceResult.myWeights[i] + "\n");
+    }
+    fw.write("---\n");
+    fw.close();
+    
+    // Also try to create a marker file to prove code executed
+    java.io.FileWriter marker = new java.io.FileWriter("MARKER_FILE_" + System.currentTimeMillis() + ".txt");
+    marker.write("This file proves the code executed at: " + new java.util.Date());
+    marker.close();
+    
+} catch (Exception e) {
+    // Create an error file if something goes wrong
+    try {
+        java.io.FileWriter errorFile = new java.io.FileWriter("ERROR_LOG.txt", true);
+        errorFile.write("Error at " + valDate + ": " + e.getMessage() + "\n");
+        errorFile.close();
+    } catch (Exception e2) {
+        // If we can't even write an error file, there's a serious permission issue
+    }
+}
