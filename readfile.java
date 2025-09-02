@@ -263,3 +263,65 @@ for (int i = 0; i < todaysRebalanceResult.myWeights.length; i++) {
     System.out.println("Weight[" + i + "] = " + todaysRebalanceResult.myWeights[i]);
 }
 System.out.println("==========================");
+
+
+
+
+
+
+public void publishExtraOutputs(ExtraOutputCollector extraOutputsCollector, 
+        PortfolioContextRepository portfolioRepository, 
+        IndexSpecificDailyResult todaysDailyResult) throws AMGException {
+    
+    try {
+        // Get the current date from the portfolio context
+        LibAMGDate currentDate = portfolioRepository.getPortfolioProvider().getMainPortfolio().getDate();
+        
+        // Write weights to file
+        java.io.FileWriter fw = new java.io.FileWriter("C:\\Users\\xiazhu\\Desktop\\ALL_WEIGHTS_HISTORY.csv", true);
+        
+        // Check if file is new to write header
+        java.io.File file = new java.io.File("C:\\Users\\xiazhu\\Desktop\\ALL_WEIGHTS_HISTORY.csv");
+        if (file.length() == 0) {
+            // Write header
+            fw.write("Date");
+            for (Identifier id : myIdentifier) {
+                fw.write("," + id.getMarketId());
+            }
+            fw.write("\n");
+        }
+        
+        // Write date
+        fw.write(currentDate.toString());
+        
+        // Write weights - check if myWeights is populated
+        if (todaysDailyResult.myWeights != null && todaysDailyResult.myWeights.length > 0) {
+            // Use the calculated weights
+            for (double weight : todaysDailyResult.myWeights) {
+                fw.write("," + weight);
+            }
+        } else {
+            // Fall back to myThirdPartyIndexComps if myWeights isn't populated
+            for (Identifier id : myIdentifier) {
+                Double weight = myThirdPartyIndexComps.get(id.getMarketId());
+                fw.write("," + (weight != null ? weight : "0.0"));
+            }
+        }
+        fw.write("\n");
+        fw.close();
+        
+    } catch (Exception e) {
+        // Try to write error log
+        try {
+            java.io.FileWriter errorLog = new java.io.FileWriter("C:\\Users\\xiazhu\\Desktop\\WEIGHTS_ERROR.txt", true);
+            errorLog.write("Error at publishExtraOutputs: " + e.getMessage() + "\n");
+            errorLog.close();
+        } catch (Exception e2) {
+            // Silent fail
+        }
+    }
+    
+    // Existing code...
+    extraOutputsCollector.value(Publish, ExtraOutputs.key(INDEX_FEE_REPORT, INDEX_PRICE), todaysDailyResult.myPrice);
+    // ... rest of existing code ...
+}
