@@ -172,3 +172,43 @@ try {
         // If we can't even write an error file, there's a serious permission issue
     }
 }
+
+
+// Debug: Find out where files are actually being written
+try {
+    // Get absolute path information
+    java.io.File currentDir = new java.io.File(".");
+    String absolutePath = currentDir.getAbsolutePath();
+    
+    // Create a file with the absolute path in its name
+    String fileName = "WEIGHTS_LOCATION_" + absolutePath.replace(":", "").replace("\\", "_").replace("/", "_") + ".txt";
+    java.io.FileWriter fw = new java.io.FileWriter(fileName);
+    fw.write("Current working directory: " + absolutePath + "\n");
+    fw.write("User home: " + System.getProperty("user.home") + "\n");
+    fw.write("User dir: " + System.getProperty("user.dir") + "\n");
+    fw.write("Temp dir: " + System.getProperty("java.io.tmpdir") + "\n");
+    fw.write("Date: " + valDate.toString() + "\n");
+    fw.close();
+    
+    // Also write to absolute path on Desktop
+    String desktopPath = "C:\\Users\\xiazhu\\Desktop\\WEIGHTS_ABSOLUTE_TEST.txt";
+    java.io.FileWriter desktopWriter = new java.io.FileWriter(desktopPath, true);
+    desktopWriter.write("Successfully wrote at: " + new java.util.Date() + "\n");
+    desktopWriter.write("Date: " + valDate.toString() + "\n");
+    desktopWriter.close();
+    
+} catch (Exception e) {
+    // Try writing error to desktop
+    try {
+        String errorPath = "C:\\Users\\xiazhu\\Desktop\\WRITE_ERROR.txt";
+        java.io.FileWriter errorWriter = new java.io.FileWriter(errorPath);
+        errorWriter.write("Error: " + e.getMessage() + "\n");
+        errorWriter.write("Stack trace:\n");
+        for (StackTraceElement elem : e.getStackTrace()) {
+            errorWriter.write(elem.toString() + "\n");
+        }
+        errorWriter.close();
+    } catch (Exception e2) {
+        // Silent fail
+    }
+}
