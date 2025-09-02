@@ -237,3 +237,125 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+# Cell 2 - Modified JavaToXMLTemplateConverter class
+class JavaToXMLTemplateConverter:
+    """Converter that wraps Java code in a specific XML template structure"""
+    
+    def __init__(self):
+        self.java_content = ""
+        
+    def read_java_file(self, file_path):
+        """Read the Java source file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                self.java_content = f.read()
+            return True
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            return False
+    
+    def escape_java_for_xml(self, java_code):
+        """
+        Manually escape XML special characters but preserve quotes in strings
+        """
+        # Only escape the essential XML characters, NOT quotes
+        escaped = java_code.replace('&', '&amp;')  # Must be first!
+        escaped = escaped.replace('<', '&lt;')
+        escaped = escaped.replace('>', '&gt;')
+        # Do NOT escape quotes - leave them as-is
+        return escaped
+    
+    def create_xml_template(self, name, version, simple_class_name, dependency="amg/libamgx"):
+        """
+        Create the XML template with manual formatting to avoid quote escaping
+        
+        Args:
+            name: Name for the component
+            version: Version string
+            simple_class_name: Simple class name
+            dependency: Dependency string (default: amg/libamgx)
+        
+        Returns:
+            XML string with proper formatting
+        """
+        # Manually escape the Java code
+        escaped_java = self.escape_java_for_xml(self.java_content)
+        
+        # Build XML manually to have complete control over escaping
+        xml_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<Component>',
+            '    <JavaDynamicIndexTemplate>',
+            f'        <Name>{name}</Name>',
+            f'        <Version>{version}</Version>',
+            f'        <SimpleClassName>{simple_class_name}</SimpleClassName>',
+            f'        <Dependency>{dependency}</Dependency>',
+            f'        <SourceCode>{escaped_java}</SourceCode>',
+            '    </JavaDynamicIndexTemplate>',
+            '</Component>'
+        ]
+        
+        return '\n'.join(xml_lines)
+    
+    def convert(self, java_file_path, output_xml_path, name, version, 
+                simple_class_name, dependency="amg/libamgx"):
+        """
+        Main conversion method
+        
+        Args:
+            java_file_path: Path to input Java file
+            output_xml_path: Path for output XML file
+            name: Component name
+            version: Component version
+            simple_class_name: Simple class name
+            dependency: Dependency (default: amg/libamgx)
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        # Read the Java file
+        if not self.read_java_file(java_file_path):
+            return False
+        
+        try:
+            # Create the XML template
+            xml_content = self.create_xml_template(
+                name=name,
+                version=version,
+                simple_class_name=simple_class_name,
+                dependency=dependency
+            )
+            
+            # Write to output file
+            with open(output_xml_path, 'w', encoding='utf-8') as f:
+                f.write(xml_content)
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+            return False
+    
+    def preview(self, java_file_path, name, version, simple_class_name, dependency="amg/libamgx"):
+        """Preview the XML output without saving to file"""
+        if not self.read_java_file(java_file_path):
+            return None
+        
+        try:
+            xml_content = self.create_xml_template(
+                name=name,
+                version=version,
+                simple_class_name=simple_class_name,
+                dependency=dependency
+            )
+            return xml_content
+        except Exception as e:
+            print(f"Error during preview: {e}")
+            return None
