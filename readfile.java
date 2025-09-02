@@ -76,3 +76,69 @@ try {
     // Log error but don't fail the process
     System.err.println("Warning: Could not write weights to file: " + e.getMessage());
 }
+
+
+
+// Write weights to file for each date
+try {
+    // Define output file path - adjust as needed
+    String outputPath = "C:/Users/xiazhu/Desktop/all_weights_history.csv";
+    java.io.File file = new java.io.File(outputPath);
+    boolean fileExists = file.exists() && file.length() > 0;
+    
+    // Open file in append mode
+    java.io.PrintWriter writer = new java.io.PrintWriter(
+        new java.io.FileWriter(outputPath, true)  // true = append mode
+    );
+    
+    // Write header only if file is new
+    if (!fileExists) {
+        // Write header with Date and all underlier names
+        writer.print("Date");
+        for (Identifier id : myIdentifier) {
+            writer.print("," + id.getMarketId());
+        }
+        writer.print(",CashWeight,Leverage,RiskyAssetSpot,IndexPrice");
+        writer.println();
+    }
+    
+    // Write data row for current date
+    writer.print(valDate.toString());  // Current date
+    
+    // Write each weight
+    for (double weight : todaysRebalanceResult.myWeights) {
+        writer.print("," + String.format("%.6f", weight));
+    }
+    
+    // Also write cash weight, leverage, and other useful info
+    writer.print("," + String.format("%.6f", todaysRebalanceResult.myCashWeight));
+    writer.print("," + String.format("%.6f", todaysRebalanceResult.myLeverage));
+    writer.print("," + String.format("%.6f", todaysRebalanceResult.myRiskyAssetSpot));
+    writer.print("," + String.format("%.6f", todaysRebalanceResult.myPrice[0]));
+    
+    writer.println();
+    writer.close();
+    
+    // Optional: Also create a detailed text file for easier reading
+    java.io.PrintWriter txtWriter = new java.io.PrintWriter(
+        new java.io.FileWriter("C:/Users/xiazhu/Desktop/weights_detailed_history.txt", true)
+    );
+    
+    txtWriter.println("=== Date: " + valDate.toString() + " ===");
+    for (int i = 0; i < myIdentifier.size(); i++) {
+        txtWriter.println("  " + myIdentifier.get(i).getMarketId() + ": " + 
+                         String.format("%.6f", todaysRebalanceResult.myWeights[i]) + 
+                         " (BBG: " + myIdentifier.get(i).getBbgId() + ")");
+    }
+    txtWriter.println("  Cash Weight: " + String.format("%.6f", todaysRebalanceResult.myCashWeight));
+    txtWriter.println("  Total Leverage: " + String.format("%.6f", todaysRebalanceResult.myLeverage));
+    txtWriter.println("  Index Price: " + String.format("%.6f", todaysRebalanceResult.myPrice[0]));
+    txtWriter.println();
+    txtWriter.close();
+    
+} catch (java.io.IOException e) {
+    // Log error but don't fail the entire process
+    System.err.println("Warning: Could not write weights to file: " + e.getMessage());
+    // Optionally throw if you want to stop on file write errors:
+    // throw new AMGException("Failed to write weights history: " + e.getMessage());
+}
