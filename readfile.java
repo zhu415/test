@@ -253,3 +253,13 @@ try {
         // Silent fail
     }
 }
+
+
+// Write to system output instead of file
+System.out.println("===== WEIGHTS OUTPUT =====");
+System.out.println("Date: " + valDate.toString());
+System.out.println("Weights array length: " + todaysRebalanceResult.myWeights.length);
+for (int i = 0; i < todaysRebalanceResult.myWeights.length; i++) {
+    System.out.println("Weight[" + i + "] = " + todaysRebalanceResult.myWeights[i]);
+}
+System.out.println("==========================");
