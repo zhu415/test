@@ -380,3 +380,173 @@ processor = ConvertibleBondXMLProcessor()
 results = processor.extract_output_info("your_output.xml")
 print(f"\\nExtracted values: {results}")
 """)
+
+
+
+
+
+def indent_xml(self, elem, level=0):
+    """Add proper indentation to XML elements"""
+    i = "\n" + level * "  "
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + "  "
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+        for child in elem:
+            self.indent_xml(child, level+1)
+        if not child.tail or not child.tail.strip():
+            child.tail = i
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = i
+
+def process_not_callable(self, cb_element):
+    """Process for not callable type - comment out CallSchedule if exists"""
+    call_schedule = cb_element.find('.//CallSchedule')
+    if call_schedule is not None:
+        # Get the indentation level by counting parent depth
+        indent_level = 0
+        current = call_schedule
+        while current is not None:
+            current = self.root.find('.//..[' + current.tag + ']')
+            if current is not None:
+                indent_level += 1
+        
+        # Create properly formatted comment text
+        self.indent_xml(call_schedule, 0)
+        comment_text = ET.tostring(call_schedule, encoding='unicode').strip()
+        
+        # Add newline before comment
+        comment_with_newline = "\n" + "  " * (indent_level + 1) + "<!--" + comment_text + "-->"
+        comment = ET.Comment(comment_with_newline)
+        
+        # Find parent and replace with comment
+        parent = cb_element
+        for elem in cb_element.iter():
+            if call_schedule in elem:
+                parent = elem
+                break
+        
+        # Get the index and preserve formatting
+        index = list(parent).index(call_schedule)
+        
+        # Set proper tail for the comment to maintain formatting
+        comment.tail = "\n" + "  " * indent_level if index < len(list(parent)) - 1 else "\n" + "  " * (indent_level - 1)
+        
+        parent.insert(index, comment)
+        parent.remove(call_schedule)
+        print("✓ CallSchedule section has been commented out")
+    else:
+        print("ℹ️ CallSchedule section not found - no modification needed")
+
+def process_callable(self, cb_element, call_type, start_date, end_date, 
+                    call_price=1000, call_notice_period=None,
+                    trigger=None, trigger_knocked_days=None, 
+                    trigger_lookback_days=None, trigger_reset=None):
+    """Process for callable types (hard or soft)"""
+    
+    # Validate end date against expiry date
+    if self.expiry_date and end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            expiry_dt = datetime.strptime(self.expiry_date, "%Y-%m-%d")
+            if end_dt > expiry_dt:
+                print(f"✗ ERROR: End date {end_date} exceeds expiry date {self.expiry_date}")
+                return False
+        except ValueError as e:
+            print(f"✗ Error parsing dates: {e}")
+    
+    # Find or create CallSchedule
+    call_schedule = cb_element.find('.//CallSchedule')
+    
+    if call_schedule is None:
+        # Create new CallSchedule section with proper indentation
+        call_schedule = ET.SubElement(cb_element, 'CallSchedule')
+        print("✓ Created new CallSchedule section")
+    else:
+        # Clear existing CallSchedule for updating
+        call_schedule.clear()
+        call_schedule.tag = 'CallSchedule'
+        print("✓ Found existing CallSchedule section - updating")
+    
+    # Add basic elements with proper formatting
+    start_elem = ET.SubElement(call_schedule, 'StartDate')
+    start_elem.text = start_date
+    
+    end_elem = ET.SubElement(call_schedule, 'EndDate')
+    end_elem.text = end_date
+    
+    price_elem = ET.SubElement(call_schedule, 'CallPrice')
+    price_elem.text = str(call_price)
+    
+    # Add CallNoticePeriod if provided
+    if call_notice_period is not None:
+        notice_elem = ET.SubElement(call_schedule, 'CallNoticePeriod')
+        notice_elem.text = str(call_notice_period)
+    
+    # Add soft call specific elements
+    if call_type.lower() == 'soft':
+        if trigger is not None:
+            trigger_elem = ET.SubElement(call_schedule, 'Trigger')
+            trigger_elem.text = str(trigger)
+        if trigger_knocked_days is not None:
+            knocked_elem = ET.SubElement(call_schedule, 'TriggerKnockedDays')
+            knocked_elem.text = str(trigger_knocked_days)
+        if trigger_lookback_days is not None:
+            lookback_elem = ET.SubElement(call_schedule, 'TriggerLookbackDays')
+            lookback_elem.text = str(trigger_lookback_days)
+        if trigger_reset is not None:
+            reset_elem = ET.SubElement(call_schedule, 'TriggerReset')
+            reset_elem.text = str(trigger_reset).lower()
+        print("✓ Added soft call parameters")
+    else:
+        print("✓ Configured for hard call (no trigger parameters)")
+    
+    # Apply proper indentation to the CallSchedule element
+    self.indent_xml(call_schedule, 2)  # Assuming CallSchedule is at level 2
+    
+    return True
+
+def save_modified_xml(self, original_filepath, output_directory=None, call_type="", call_period=None, trigger=None):
+    """Save modified XML with descriptive filename in specified directory"""
+    # Get base name from original file (without path and extension)
+    original_base_name = os.path.splitext(os.path.basename(original_filepath))[0]
+    
+    # Use original file's directory if output_directory not provided
+    if output_directory is None:
+        output_directory = os.path.dirname(original_filepath)
+        if not output_directory:  # Handle case where original_filepath is just filename
+            output_directory = "."
+    
+    # Build the suffix based on call type
+    if call_type.lower() == 'not callable':
+        suffix = "non"
+    elif call_type.lower() == 'hard':
+        suffix = f"hard_{call_period}" if call_period else "hard"
+    elif call_type.lower() == 'soft':
+        if call_period and trigger:
+            suffix = f"soft_{call_period}_{trigger}"
+        elif call_period:
+            suffix = f"soft_{call_period}"
+        else:
+            suffix = "soft"
+    else:
+        suffix = call_type.lower()
+    
+    # Create output filename with original base name
+    output_filename = f"{original_base_name}_{suffix}.xml"
+    
+    # Create full output path
+    output_path = os.path.join(output_directory, output_filename)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(output_directory, exist_ok=True)
+    
+    # Apply indentation to entire tree before saving
+    self.indent_xml(self.root)
+    
+    # Save the file with proper formatting
+    self.tree.write(output_path, encoding='utf-8', xml_declaration=True, method='xml')
+    print(f"✓ Saved modified XML as: {output_path}")
+    return output_path
