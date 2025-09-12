@@ -550,3 +550,55 @@ def save_modified_xml(self, original_filepath, output_directory=None, call_type=
     self.tree.write(output_path, encoding='utf-8', xml_declaration=True, method='xml')
     print(f"✓ Saved modified XML as: {output_path}")
     return output_path
+
+
+
+
+def process_not_callable(self, cb_element):
+    """Process for not callable type - comment out CallSchedule if exists"""
+    call_schedule = cb_element.find('.//CallSchedule')
+    if call_schedule is not None:
+        # Build parent map to find element relationships
+        parent_map = {}
+        for parent in self.root.iter():
+            for child in parent:
+                parent_map[child] = parent
+        
+        # Get the direct parent of CallSchedule
+        if call_schedule in parent_map:
+            parent = parent_map[call_schedule]
+        else:
+            # Fallback: search in cb_element
+            parent = cb_element
+            for elem in cb_element.iter():
+                if call_schedule in list(elem):
+                    parent = elem
+                    break
+        
+        # Count indentation level
+        indent_level = 0
+        current = call_schedule
+        while current in parent_map:
+            indent_level += 1
+            current = parent_map[current]
+        
+        # Convert CallSchedule to string for commenting
+        call_schedule_str = ET.tostring(call_schedule, encoding='unicode').strip()
+        
+        # Create the comment with the content
+        comment = ET.Comment(call_schedule_str)
+        
+        # Find index of CallSchedule in parent
+        parent_children = list(parent)
+        index = parent_children.index(call_schedule)
+        
+        # Preserve formatting - use the tail from the original element
+        comment.tail = call_schedule.tail if call_schedule.tail else "\n" + "  " * (indent_level - 1)
+        
+        # Insert comment at the same position and remove original
+        parent.insert(index, comment)
+        parent.remove(call_schedule)
+        
+        print("✓ CallSchedule section has been commented out")
+    else:
+        print("ℹ️ CallSchedule section not found - no modification needed")
