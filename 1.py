@@ -428,3 +428,201 @@ def quick_process(target_dir, info_xml_path, save_to_new_dir=False):
         print(f"💾 Modified files will be saved to: {output_dir}\n")
     
     return process_xml_files(target_dir, info_xml_path, output_dir)
+
+
+
+def parse_information_xml(info_xml_path):
+    """
+    Parse the information XML and extract GrowthSpread data.
+    Returns a dictionary with underlierID patterns as keys.
+    """
+    tree = ET.parse(info_xml_path)
+    root = tree.getroot()
+    
+    growth_spread_data = {}
+    
+    # Find all GrowthSpread sections
+    for growth_spread in root.findall('.//GrowthSpread'):
+        # Get UnderlierID
+        underlier_id = growth_spread.find('UnderlierID')
+        if underlier_id is not None and underlier_id.text:
+            # Extract the first part before underscore
+            match = re.match(r'^([^_]+)_', underlier_id.text)
+            if match:
+                base_name = match.group(1)
+                
+                # Parse GrowthSpreadPoints
+                growth_points = []
+                points_element = growth_spread.find('GrowthSpreadPoints')
+                if points_element is not None and points_element.text:
+                    # Parse each line in GrowthSpreadPoints
+                    lines = points_element.text.strip().split('\n')
+                    for line in lines:
+                        # Extract Tex and Val values using regex
+                        tex_match = re.search(r'Tex="(\d+)"', line)
+                        type_match = re.search(r'text type="([a-zA-Z])"', line)
+                        val_match = re.search(r'Val="([0-9.]+)"', line)
+                        
+                        if tex_match and type_match and val_match:
+                            tex_value = tex_match.group(1)
+                            type_char = type_match.group(1).lower()
+                            val_value = val_match.group(1)
+                            
+                            growth_points.append({
+                                'tenor': f"{tex_value}{type_char}",
+                                'value': val_value
+                            })
+                
+                growth_spread_data[base_name] = growth_points
+    
+    return growth_spread_data
+
+def modify_xml_file(xml_path, growth_spread_data):
+    """
+    Modify a single XML file based on growth spread data.
+    """
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        # Get MdSymbol value
+        md_symbol = root.find('.//MdSymbol')
+        if md_symbol is None or not md_symbol.text:
+            print(f"Warning: No MdSymbol found in {xml_path}")
+            return False
+        
+        # Extract the base name from MdSymbol
+        match = re.match(r'^([^_]+)_', md_symbol.text)
+        if not match:
+            print(f"Warning: MdSymbol pattern not matched in {xml_path}")
+            return False
+        
+        base_name = match.group(1)
+        
+        # Check if we have growth spread data for this base name
+        if base_name not in growth_spread_data:
+            print(f"Warning: No growth spread data found for {base_name} in {xml_path}")
+            return False
+        
+        # Find BorrowShiftTermStructure section
+        borrow_section = root.find('.//BorrowShiftTermStructure')
+        if borrow_section is None:
+            print(f"Warning: No BorrowShiftTermStructure section found in {xml_path}")
+            return False
+        
+        # Remove existing Tenor and Value tags
+        for tenor in borrow_section.findall('Tenor'):
+            borrow_section.remove(tenor)
+        for value in borrow_section.findall('Value'):
+            borrow_section.remove(value)
+        
+        # Add new Tenor and Value tags based on growth spread data
+        growth_points = growth_spread_data[base_name]
+        for point in growth_points:
+            # Create and add Tenor element
+            tenor_elem = ET.SubElement(borrow_section, 'Tenor')
+            tenor_elem.text = point['tenor']
+            
+            # Create and add Value element
+            value_elem = ET.SubElement(borrow_section, 'Value')
+            value_elem.text = point['value']
+        
+        # Save the modified XML
+        output_path = xml_path.replace('.xml', '_modified.xml')
+        tree.write(output_path, encoding='utf-8', xml_declaration=True)
+        print(f"Successfully modified and saved: {output_path}")
+        return True
+        
+    except Exception as e:
+        print(f"Error processing {xml_path}: {str(e)}")
+        return False
+
+def process_all_xmls(info_xml_name='information.xml'):
+    """
+    Main function to process all XML files in the current directory.
+    """
+    current_dir = Path('.')
+    
+    # Find the information XML file
+    info_xml_path = current_dir / info_xml_name
+    if not info_xml_path.exists():
+        print(f"Error: Information XML file '{info_xml_name}' not found!")
+        return
+    
+    print(f"Parsing information from {info_xml_name}...")
+    growth_spread_data = parse_information_xml(info_xml_path)
+    
+    if not growth_spread_data:
+        print("No growth spread data found in information XML!")
+        return
+    
+    print(f"Found growth spread data for: {', '.join(growth_spread_data.keys())}")
+    
+    # Process all XML files except the information XML
+    xml_files = [f for f in current_dir.glob('*.xml') 
+                 if f.name != info_xml_name and not f.name.endswith('_modified.xml')]
+    
+    if not xml_files:
+        print("No XML files to modify found in current directory!")
+        return
+    
+    print(f"\nProcessing {len(xml_files)} XML file(s)...")
+    
+    success_count = 0
+    for xml_file in xml_files:
+        print(f"\nProcessing: {xml_file.name}")
+        if modify_xml_file(str(xml_file), growth_spread_data):
+            success_count += 1
+    
+    print(f"\n{'='*50}")
+    print(f"Processing complete: {success_count}/{len(xml_files)} files modified successfully")
+
+# Alternative function if GrowthSpreadPoints contains child elements instead of text
+def parse_information_xml_alternative(info_xml_path):
+    """
+    Alternative parser if GrowthSpreadPoints contains child elements.
+    """
+    tree = ET.parse(info_xml_path)
+    root = tree.getroot()
+    
+    growth_spread_data = {}
+    
+    for growth_spread in root.findall('.//GrowthSpread'):
+        underlier_id = growth_spread.find('UnderlierID')
+        if underlier_id is not None and underlier_id.text:
+            match = re.match(r'^([^_]+)_', underlier_id.text)
+            if match:
+                base_name = match.group(1)
+                
+                growth_points = []
+                points_element = growth_spread.find('GrowthSpreadPoints')
+                if points_element is not None:
+                    # Look for child elements with gspt tag
+                    for gspt in points_element.findall('.//gspt'):
+                        tex_value = gspt.get('Tex')
+                        val_value = gspt.get('Val')
+                        # Try to find type attribute (might be in different format)
+                        type_char = gspt.get('type', '')
+                        if not type_char:
+                            # Try to extract from other attributes
+                            for attr_value in gspt.attrib.values():
+                                if len(attr_value) == 1 and attr_value.isalpha():
+                                    type_char = attr_value.lower()
+                                    break
+                        
+                        if tex_value and val_value and type_char:
+                            growth_points.append({
+                                'tenor': f"{tex_value}{type_char}",
+                                'value': val_value
+                            })
+                
+                growth_spread_data[base_name] = growth_points
+    
+    return growth_spread_data
+
+if __name__ == "__main__":
+    # Run the main processing function
+    process_all_xmls()
+    
+    # If you need to specify a different information XML filename:
+    # process_all_xmls('your_info_file.xml')
