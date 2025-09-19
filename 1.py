@@ -1,225 +1,173 @@
 import os
 import xml.etree.ElementTree as ET
+import re
 from pathlib import Path
 
-def parse_info_xml(info_xml_path):
-    """Parse info.xml and extract GrowthSpread data"""
-    growth_spread_data = {}
+def parse_info_file(info_path):
+    """
+    Parse info.txt to extract GrowthSpread sections and their data.
+    Returns a dictionary mapping UnderlierID to growth spread points.
+    """
+    growth_spreads = {}
     
-    try:
-        # First, try standard XML parsing
-        tree = ET.parse(info_xml_path)
-        root = tree.getroot()
-        
-        # Find all GrowthSpread sections
-        for growth_spread in root.findall('.//GrowthSpread'):
-            process_growth_spread(growth_spread, growth_spread_data)
-            
-    except ET.ParseError as e:
-        print(f"Standard XML parsing failed: {e}")
-        print("Attempting to fix malformed XML...")
-        
-        # Try to fix malformed XML
-        try:
-            with open(info_xml_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-            
-            # Method 1: Wrap content in a root element if multiple roots exist
-            if content.count('<?xml') > 1:
-                # Multiple XML declarations - remove extra ones
-                parts = content.split('<?xml')
-                content = '<?xml' + parts[1]  # Keep first XML declaration
-                for part in parts[2:]:
-                    # Remove XML declaration from subsequent parts
-                    if '?>' in part:
-                        content += part[part.index('?>') + 2:]
-            
-            # Check if we need a root wrapper
-            lines = content.strip().split('\n')
-            root_elements = []
-            in_element = False
-            current_element = ""
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith('<?xml') or line.startswith('<!--'):
-                    continue
-                if line.startswith('<') and not line.startswith('</'):
-                    if not in_element and not line.endswith('/>'):
-                        # This might be a root element
-                        element_name = line.split()[0].replace('<', '').replace('>', '')
-                        if not any(line.strip().startswith('</' + element_name) for line in lines[lines.index(line):]):
-                            # Likely a root element without proper closing
-                            root_elements.append(element_name)
-            
-            # If we have multiple potential root elements, wrap in a container
-            if len(root_elements) > 1 or content.count('<GrowthSpread>') > 1:
-                print("Detected multiple root elements, wrapping in container...")
-                # Remove any existing root wrapper and create new one
-                content = content.strip()
-                if not content.startswith('<root>'):
-                    content = '<root>\n' + content + '\n</root>'
-            
-            # Parse the fixed content
-            root = ET.fromstring(content)
-            
-            # Find all GrowthSpread sections
-            for growth_spread in root.findall('.//GrowthSpread'):
-                process_growth_spread(growth_spread, growth_spread_data)
-                
-        except Exception as e2:
-            print(f"Failed to fix malformed XML: {e2}")
-            # Last resort: try to extract GrowthSpread sections manually
-            try:
-                print("Attempting manual extraction...")
-                with open(info_xml_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                
-                # Find all GrowthSpread sections using string manipulation
-                import re
-                growth_spread_pattern = r'<GrowthSpread>(.*?)</GrowthSpread>'
-                matches = re.findall(growth_spread_pattern, content, re.DOTALL)
-                
-                for match in matches:
-                    # Wrap each match in GrowthSpread tags and parse
-                    growth_spread_xml = f'<GrowthSpread>{match}</GrowthSpread>'
-                    try:
-                        growth_spread_elem = ET.fromstring(growth_spread_xml)
-                        process_growth_spread(growth_spread_elem, growth_spread_data)
-                    except ET.ParseError:
-                        print(f"Failed to parse individual GrowthSpread section")
-                        continue
-                        
-            except Exception as e3:
-                print(f"Manual extraction also failed: {e3}")
-                raise e3
+    with open(info_path, 'r', encoding='utf-8') as file:
+        content = file.read()
     
-    return growth_spread_data
-
-def process_growth_spread(growth_spread, growth_spread_data):
-    """Process a single GrowthSpread element"""
-    underlier_id_elem = growth_spread.find('UnderlierID')
-    if underlier_id_elem is not None:
-        underlier_id = underlier_id_elem.text.strip()
+    # Find all GrowthSpread sections
+    growth_spread_pattern = r'<GrowthSpread>(.*?)</GrowthSpread>'
+    growth_spread_sections = re.findall(growth_spread_pattern, content, re.DOTALL)
+    
+    for section in growth_spread_sections:
+        # Extract UnderlierID
+        underlier_match = re.search(r'<UnderlierID>(.*?)</UnderlierID>', section)
+        if not underlier_match:
+            continue
+        
+        underlier_id = underlier_match.group(1).strip()
         
         # Extract GrowthSpreadPoints
-        growth_spread_points = growth_spread.find('GrowthSpreadPoints')
-        if growth_spread_points is not None:
-            gspt_data = []
-            for gspt in growth_spread_points.findall('gspt'):
-                # Extract required attributes
-                tex = gspt.get('Tex', '')
-                text_type = gspt.get('type', '')
-                val = gspt.get('Val', '')
-                
-                # Create tenor from Tex + lowercase of type
-                tenor = tex + text_type.lower()
-                
-                gspt_data.append({
-                    'tenor': tenor,
-                    'value': val
-                })
-            
-            growth_spread_data[underlier_id] = gspt_data
+        points_match = re.search(r'<GrowthSpreadPoints>(.*?)</GrowthSpreadPoints>', 
+                                section, re.DOTALL)
+        if not points_match:
+            continue
+        
+        points_content = points_match.group(1)
+        
+        # Parse individual gspt lines
+        gspt_pattern = r'<gspt[^>]*\s+Tex="(\d+)"[^>]*\s+text\s+type="(\w)"[^>]*\s+Val="([^"]+)"[^>]*/?>'
+        gspt_matches = re.findall(gspt_pattern, points_content)
+        
+        growth_points = []
+        for tex_val, text_type, val in gspt_matches:
+            tenor = f"{tex_val}{text_type.lower()}"
+            growth_points.append({
+                'tenor': tenor,
+                'value': val
+            })
+        
+        growth_spreads[underlier_id] = growth_points
+    
+    return growth_spreads
 
-def modify_xml_file(xml_file_path, growth_spread_data):
-    """Modify a single XML file based on growth spread data"""
-    try:
-        tree = ET.parse(xml_file_path)
-        root = tree.getroot()
-        
-        # Find MdSymbol
-        md_symbol_elem = root.find('.//MdSymbol')
-        if md_symbol_elem is None:
-            print(f"No MdSymbol found in {xml_file_path}")
-            return False
-        
-        md_symbol = md_symbol_elem.text.strip()
-        
-        # Check if we have corresponding data
-        if md_symbol not in growth_spread_data:
-            print(f"No matching data found for MdSymbol: {md_symbol}")
-            return False
-        
-        # Find BorrowShiftTermStructure section
-        borrow_shift_elem = root.find('.//BorrowShiftTermStructure')
-        if borrow_shift_elem is None:
-            print(f"No BorrowShiftTermStructure found in {xml_file_path}")
-            return False
-        
-        # Remove existing Tenor and Value elements
-        for elem in borrow_shift_elem.findall('Tenor'):
-            borrow_shift_elem.remove(elem)
-        for elem in borrow_shift_elem.findall('Value'):
-            borrow_shift_elem.remove(elem)
-        
-        # Add new Tenor and Value elements based on growth spread data
-        gspt_data = growth_spread_data[md_symbol]
-        
-        for data_point in gspt_data:
-            # Create Tenor element
-            tenor_elem = ET.Element('Tenor')
-            tenor_elem.text = data_point['tenor']
-            borrow_shift_elem.append(tenor_elem)
-            
-            # Create Value element
-            value_elem = ET.Element('Value')
-            value_elem.text = data_point['value']
-            borrow_shift_elem.append(value_elem)
-        
-        # Save the modified XML
-        tree.write(xml_file_path, encoding='utf-8', xml_declaration=True)
-        print(f"Successfully modified: {xml_file_path}")
-        return True
-        
-    except ET.ParseError as e:
-        print(f"Error parsing {xml_file_path}: {e}")
-        return False
-    except Exception as e:
-        print(f"Error processing {xml_file_path}: {e}")
-        return False
+def get_md_symbol(xml_tree):
+    """Extract MdSymbol value from XML tree."""
+    md_symbol_elem = xml_tree.find('.//MdSymbol')
+    if md_symbol_elem is not None and md_symbol_elem.text:
+        return md_symbol_elem.text.strip()
+    return None
 
-def modify_xmls_in_directory(directory_path, info_xml_path):
-    """Main function to modify all XMLs in directory based on info.xml"""
+def update_borrow_shift_structure(xml_tree, growth_points):
+    """
+    Update BorrowShiftTermStructure section with new Tenor and Value pairs.
+    """
+    # Find BorrowShiftTermStructure element
+    borrow_shift_elem = xml_tree.find('.//BorrowShiftTermStructure')
     
-    # Parse info.xml
-    print(f"Parsing info.xml from: {info_xml_path}")
-    try:
-        growth_spread_data = parse_info_xml(info_xml_path)
-        print(f"Found data for {len(growth_spread_data)} UnderlierIDs")
-    except Exception as e:
-        print(f"Error parsing info.xml: {e}")
-        return
+    if borrow_shift_elem is None:
+        print("Warning: BorrowShiftTermStructure section not found")
+        return False
     
-    # Find all XML files in directory (excluding info.xml)
-    directory = Path(directory_path)
-    xml_files = [f for f in directory.glob('*.xml') if f.name != 'info.xml']
+    # Remove existing Tenor and Value elements
+    tenors_to_remove = borrow_shift_elem.findall('Tenor')
+    values_to_remove = borrow_shift_elem.findall('Value')
     
-    if not xml_files:
-        print(f"No XML files found in directory: {directory_path}")
-        return
+    for elem in tenors_to_remove + values_to_remove:
+        borrow_shift_elem.remove(elem)
+    
+    # Add new Tenor and Value pairs
+    for point in growth_points:
+        # Create and add Tenor element
+        tenor_elem = ET.Element('Tenor')
+        tenor_elem.text = point['tenor']
+        borrow_shift_elem.append(tenor_elem)
+        
+        # Create and add Value element
+        value_elem = ET.Element('Value')
+        value_elem.text = point['value']
+        borrow_shift_elem.append(value_elem)
+    
+    return True
+
+def process_xml_files(xml_directory, info_path, output_directory=None):
+    """
+    Process all XML files in the directory based on info.txt.
+    """
+    # If no output directory specified, use the same as input
+    if output_directory is None:
+        output_directory = xml_directory
+    
+    # Create output directory if it doesn't exist
+    Path(output_directory).mkdir(parents=True, exist_ok=True)
+    
+    # Parse info.txt
+    print(f"Parsing info file: {info_path}")
+    growth_spreads = parse_info_file(info_path)
+    print(f"Found {len(growth_spreads)} GrowthSpread sections")
+    
+    # Process each XML file
+    xml_files = [f for f in os.listdir(xml_directory) 
+                 if f.lower().endswith('.xml')]
     
     print(f"Found {len(xml_files)} XML files to process")
     
-    # Process each XML file
     modified_count = 0
     for xml_file in xml_files:
-        print(f"\nProcessing: {xml_file.name}")
-        if modify_xml_file(xml_file, growth_spread_data):
-            modified_count += 1
+        xml_path = os.path.join(xml_directory, xml_file)
+        print(f"\nProcessing: {xml_file}")
+        
+        try:
+            # Parse XML
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            # Get MdSymbol
+            md_symbol = get_md_symbol(root)
+            if not md_symbol:
+                print(f"  Warning: No MdSymbol found in {xml_file}")
+                continue
+            
+            print(f"  MdSymbol: {md_symbol}")
+            
+            # Check if we have matching growth spread data
+            if md_symbol not in growth_spreads:
+                print(f"  No matching UnderlierID found for {md_symbol}")
+                continue
+            
+            # Update BorrowShiftTermStructure
+            growth_points = growth_spreads[md_symbol]
+            print(f"  Found {len(growth_points)} growth points to update")
+            
+            if update_borrow_shift_structure(root, growth_points):
+                # Save modified XML
+                output_path = os.path.join(output_directory, xml_file)
+                tree.write(output_path, encoding='utf-8', xml_declaration=True)
+                print(f"  Successfully modified and saved to: {output_path}")
+                modified_count += 1
+            else:
+                print(f"  Failed to update BorrowShiftTermStructure")
+                
+        except ET.ParseError as e:
+            print(f"  Error parsing XML: {e}")
+        except Exception as e:
+            print(f"  Unexpected error: {e}")
     
-    print(f"\n=== Summary ===")
-    print(f"Total XML files processed: {len(xml_files)}")
-    print(f"Successfully modified: {modified_count}")
-    print(f"Failed to modify: {len(xml_files) - modified_count}")
+    print(f"\n{'='*50}")
+    print(f"Processing complete!")
+    print(f"Modified {modified_count} out of {len(xml_files)} XML files")
+    print(f"Output directory: {output_directory}")
 
-# Example usage
+def main():
+    # Configuration - Update these paths as needed
+    XML_DIRECTORY = "path/to/xml/directory"  # Directory containing XMLs to modify
+    INFO_FILE_PATH = "path/to/info.txt"      # Path to info.txt file
+    OUTPUT_DIRECTORY = "path/to/output"      # Optional: specify different output directory
+    
+    # Run the processing
+    process_xml_files(
+        xml_directory=XML_DIRECTORY,
+        info_path=INFO_FILE_PATH,
+        output_directory=OUTPUT_DIRECTORY  # Use None to save in same directory
+    )
+
 if __name__ == "__main__":
-    # Set your paths here
-    directory_path = "/path/to/your/xml/directory"  # Directory containing XMLs to modify
-    info_xml_path = "/path/to/info.xml"             # Path to info.xml
-    
-    # Alternatively, if info.xml is in the same directory as the XMLs to modify:
-    # info_xml_path = os.path.join(directory_path, "info.xml")
-    
-    modify_xmls_in_directory(directory_path, info_xml_path)
+    main()
