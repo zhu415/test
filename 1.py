@@ -174,4 +174,37 @@ if __name__ == "__main__":
 
 
 gspt_pattern = r'<gspt[^>]*\s+tex="(\d+)"[^>]*\s+texType="(\w+)"[^>]*\s+val="([^"]+)"[^>]*/>'
+
+
+def update_borrow_shift_structure(xml_tree, growth_points):
+    """
+    Update BorrowShiftTermStructure section with new Tenor and Value pairs.
+    All Tenor tags come first, followed by all Value tags.
+    """
+    # Find BorrowShiftTermStructure element
+    borrow_shift_elem = xml_tree.find('.//BorrowShiftTermStructure')
     
+    if borrow_shift_elem is None:
+        print("Warning: BorrowShiftTermStructure section not found")
+        return False
+    
+    # Remove existing Tenor and Value elements
+    tenors_to_remove = borrow_shift_elem.findall('Tenor')
+    values_to_remove = borrow_shift_elem.findall('Value')
+    
+    for elem in tenors_to_remove + values_to_remove:
+        borrow_shift_elem.remove(elem)
+    
+    # First, add all Tenor elements
+    for point in growth_points:
+        tenor_elem = ET.Element('Tenor')
+        tenor_elem.text = point['tenor']
+        borrow_shift_elem.append(tenor_elem)
+    
+    # Then, add all Value elements
+    for point in growth_points:
+        value_elem = ET.Element('Value')
+        value_elem.text = point['value']
+        borrow_shift_elem.append(value_elem)
+    
+    return True
