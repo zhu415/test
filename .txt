@@ -1,6 +1,0 @@
-A convertible’s soft-call feature is the issuer’s call right, which you can value as an embedded option that knocks in when the trigger is met and then pays (roughly) the economic value of calling (i.e., max(call price – straight value, or the forced-conversion economics))
-
-Use Monte Carlo to compute the true soft-call trigger probability
-
-Under GBM there are closed-form prices for up one-touch (a.k.a. “first-passage digital”): value 
-
