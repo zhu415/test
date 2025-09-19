@@ -56,35 +56,58 @@ def get_md_symbol(xml_tree):
         return md_symbol_elem.text.strip()
     return None
 
-def update_borrow_shift_structure(xml_tree, growth_points):
+def update_borrow_shift_structure(root, growth_points):
     """
     Update BorrowShiftTermStructure section with new Tenor and Value pairs.
+    Maintains the original position of Tenor/Value tags relative to other tags.
+    All Tenor tags come first, followed by all Value tags.
     """
     # Find BorrowShiftTermStructure element
-    borrow_shift_elem = xml_tree.find('.//BorrowShiftTermStructure')
+    borrow_shift_elem = root.find('.//BorrowShiftTermStructure')
     
     if borrow_shift_elem is None:
         print("Warning: BorrowShiftTermStructure section not found")
         return False
     
-    # Remove existing Tenor and Value elements
-    tenors_to_remove = borrow_shift_elem.findall('Tenor')
-    values_to_remove = borrow_shift_elem.findall('Value')
+    # Find the position of first Tenor or Value element
+    insert_position = None
+    elements_to_remove = []
     
-    for elem in tenors_to_remove + values_to_remove:
+    for i, child in enumerate(list(borrow_shift_elem)):
+        if child.tag in ['Tenor', 'Value']:
+            if insert_position is None:
+                insert_position = i  # Remember where first Tenor/Value was
+            elements_to_remove.append(child)
+    
+    # If no existing Tenor/Value found, append at the end
+    if insert_position is None:
+        insert_position = len(borrow_shift_elem)
+    
+    # Remove old Tenor and Value elements
+    for elem in elements_to_remove:
         borrow_shift_elem.remove(elem)
     
-    # Add new Tenor and Value pairs
+    # Create new elements with proper formatting
+    indent = "    "  # Adjust as needed
+    
+    # Create all new Tenor elements
+    new_elements = []
     for point in growth_points:
-        # Create and add Tenor element
         tenor_elem = ET.Element('Tenor')
         tenor_elem.text = point['tenor']
-        borrow_shift_elem.append(tenor_elem)
-        
-        # Create and add Value element
+        tenor_elem.tail = "\n" + indent
+        new_elements.append(tenor_elem)
+    
+    # Create all new Value elements
+    for i, point in enumerate(growth_points):
         value_elem = ET.Element('Value')
         value_elem.text = point['value']
-        borrow_shift_elem.append(value_elem)
+        value_elem.tail = "\n" + indent
+        new_elements.append(value_elem)
+    
+    # Insert all new elements at the original position
+    for i, elem in enumerate(new_elements):
+        borrow_shift_elem.insert(insert_position + i, elem)
     
     return True
 
