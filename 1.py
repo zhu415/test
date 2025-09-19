@@ -4,38 +4,123 @@ from pathlib import Path
 
 def parse_info_xml(info_xml_path):
     """Parse info.xml and extract GrowthSpread data"""
-    tree = ET.parse(info_xml_path)
-    root = tree.getroot()
-    
     growth_spread_data = {}
     
-    # Find all GrowthSpread sections
-    for growth_spread in root.findall('.//GrowthSpread'):
-        underlier_id_elem = growth_spread.find('UnderlierID')
-        if underlier_id_elem is not None:
-            underlier_id = underlier_id_elem.text.strip()
+    try:
+        # First, try standard XML parsing
+        tree = ET.parse(info_xml_path)
+        root = tree.getroot()
+        
+        # Find all GrowthSpread sections
+        for growth_spread in root.findall('.//GrowthSpread'):
+            process_growth_spread(growth_spread, growth_spread_data)
             
-            # Extract GrowthSpreadPoints
-            growth_spread_points = growth_spread.find('GrowthSpreadPoints')
-            if growth_spread_points is not None:
-                gspt_data = []
-                for gspt in growth_spread_points.findall('gspt'):
-                    # Extract required attributes
-                    tex = gspt.get('Tex', '')
-                    text_type = gspt.get('type', '')
-                    val = gspt.get('Val', '')
-                    
-                    # Create tenor from Tex + lowercase of type
-                    tenor = tex + text_type.lower()
-                    
-                    gspt_data.append({
-                        'tenor': tenor,
-                        'value': val
-                    })
+    except ET.ParseError as e:
+        print(f"Standard XML parsing failed: {e}")
+        print("Attempting to fix malformed XML...")
+        
+        # Try to fix malformed XML
+        try:
+            with open(info_xml_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+            
+            # Method 1: Wrap content in a root element if multiple roots exist
+            if content.count('<?xml') > 1:
+                # Multiple XML declarations - remove extra ones
+                parts = content.split('<?xml')
+                content = '<?xml' + parts[1]  # Keep first XML declaration
+                for part in parts[2:]:
+                    # Remove XML declaration from subsequent parts
+                    if '?>' in part:
+                        content += part[part.index('?>') + 2:]
+            
+            # Check if we need a root wrapper
+            lines = content.strip().split('\n')
+            root_elements = []
+            in_element = False
+            current_element = ""
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('<?xml') or line.startswith('<!--'):
+                    continue
+                if line.startswith('<') and not line.startswith('</'):
+                    if not in_element and not line.endswith('/>'):
+                        # This might be a root element
+                        element_name = line.split()[0].replace('<', '').replace('>', '')
+                        if not any(line.strip().startswith('</' + element_name) for line in lines[lines.index(line):]):
+                            # Likely a root element without proper closing
+                            root_elements.append(element_name)
+            
+            # If we have multiple potential root elements, wrap in a container
+            if len(root_elements) > 1 or content.count('<GrowthSpread>') > 1:
+                print("Detected multiple root elements, wrapping in container...")
+                # Remove any existing root wrapper and create new one
+                content = content.strip()
+                if not content.startswith('<root>'):
+                    content = '<root>\n' + content + '\n</root>'
+            
+            # Parse the fixed content
+            root = ET.fromstring(content)
+            
+            # Find all GrowthSpread sections
+            for growth_spread in root.findall('.//GrowthSpread'):
+                process_growth_spread(growth_spread, growth_spread_data)
                 
-                growth_spread_data[underlier_id] = gspt_data
+        except Exception as e2:
+            print(f"Failed to fix malformed XML: {e2}")
+            # Last resort: try to extract GrowthSpread sections manually
+            try:
+                print("Attempting manual extraction...")
+                with open(info_xml_path, 'r', encoding='utf-8') as file:
+                    content = file.read()
+                
+                # Find all GrowthSpread sections using string manipulation
+                import re
+                growth_spread_pattern = r'<GrowthSpread>(.*?)</GrowthSpread>'
+                matches = re.findall(growth_spread_pattern, content, re.DOTALL)
+                
+                for match in matches:
+                    # Wrap each match in GrowthSpread tags and parse
+                    growth_spread_xml = f'<GrowthSpread>{match}</GrowthSpread>'
+                    try:
+                        growth_spread_elem = ET.fromstring(growth_spread_xml)
+                        process_growth_spread(growth_spread_elem, growth_spread_data)
+                    except ET.ParseError:
+                        print(f"Failed to parse individual GrowthSpread section")
+                        continue
+                        
+            except Exception as e3:
+                print(f"Manual extraction also failed: {e3}")
+                raise e3
     
     return growth_spread_data
+
+def process_growth_spread(growth_spread, growth_spread_data):
+    """Process a single GrowthSpread element"""
+    underlier_id_elem = growth_spread.find('UnderlierID')
+    if underlier_id_elem is not None:
+        underlier_id = underlier_id_elem.text.strip()
+        
+        # Extract GrowthSpreadPoints
+        growth_spread_points = growth_spread.find('GrowthSpreadPoints')
+        if growth_spread_points is not None:
+            gspt_data = []
+            for gspt in growth_spread_points.findall('gspt'):
+                # Extract required attributes
+                tex = gspt.get('Tex', '')
+                text_type = gspt.get('type', '')
+                val = gspt.get('Val', '')
+                
+                # Create tenor from Tex + lowercase of type
+                tenor = tex + text_type.lower()
+                
+                gspt_data.append({
+                    'tenor': tenor,
+                    'value': val
+                })
+            
+            growth_spread_data[underlier_id] = gspt_data
 
 def modify_xml_file(xml_file_path, growth_spread_data):
     """Modify a single XML file based on growth spread data"""
