@@ -171,3 +171,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+gspt_pattern = r'<gspt[^>]*\s+tex="(\d+)"[^>]*\s+texType="(\w+)"[^>]*\s+val="([^"]+)"[^>]*/>'
+    
