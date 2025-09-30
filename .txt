@@ -1,10 +1,21 @@
-git filter-branch -f --env-filter '
-if [ "$GIT_AUTHOR_EMAIL" = "xq.zhu1@example.com" ]; then
-    export GIT_AUTHOR_NAME="Z, Xq (IED)"
-    export GIT_AUTHOR_EMAIL="xq.zhu@example.com"
-fi
-if [ "$GIT_COMMITTER_EMAIL" = "xq.zhu1@example.com" ]; then
-    export GIT_COMMITTER_NAME="Z, Xq (IED)"
-    export GIT_COMMITTER_EMAIL="xq.zhu@example.com"
-fi
-' -- --all
+import subprocess
+import sys
+
+old_email = "xq.zhu1@example.com"
+new_email = "xq.zhu@example.com"
+new_name = "Z, Xq (IED)"
+
+# Get all commits
+result = subprocess.run(['git', 'rev-list', '--all'], capture_output=True, text=True)
+commits = result.stdout.strip().split('\n')
+
+for commit in commits:
+    # Get commit info
+    result = subprocess.run(['git', 'show', '-s', '--format=%ae', commit], capture_output=True, text=True)
+    author_email = result.stdout.strip()
+    
+    if author_email == old_email:
+        print(f"Would rewrite: {commit}")
+
+print(f"\nFound commits to rewrite. This is a complex operation.")
+print("Recommendation: Use the mailmap feature instead (no history rewriting needed)")
