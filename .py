@@ -64,14 +64,15 @@ def parse_txt_file(txt_path: str) -> Dict[str, Dict]:
     return configs
 
 
-def modify_xml_file(xml_path: str, config: Dict, update_time: datetime):
+def modify_xml_file_to_path(xml_path: str, config: Dict, update_time: datetime, output_path: str):
     """
-    Modify a single XML file based on the configuration.
+    Modify a single XML file based on the configuration and save to specified path.
     
     Args:
-        xml_path: Path to the XML file
+        xml_path: Path to the input XML file
         config: Configuration dict with 'weights' and 'borrow_shift'
         update_time: DateTime object for the UpdateTime field
+        output_path: Path where the modified XML should be saved
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -138,12 +139,25 @@ def modify_xml_file(xml_path: str, config: Dict, update_time: datetime):
         update_time_elem = ET.SubElement(root, 'UpdateTime')
     update_time_elem.text = update_time.strftime('%Y-%m-%dT%H:%M:%S.000')
     
-    # Write back to file
-    tree.write(xml_path, encoding='utf-8', xml_declaration=True)
-    print(f"Successfully updated {xml_path}")
+    # Write to specified output path
+    tree.write(output_path, encoding='utf-8', xml_declaration=True)
+    print(f"Successfully saved to {output_path}")
 
 
-def modify_xml_files_from_txt(xml_directory: str, txt_file: str, update_time_str: str):
+def modify_xml_file(xml_path: str, config: Dict, update_time: datetime):
+    """
+    Modify a single XML file based on the configuration (in-place modification).
+    
+    Args:
+        xml_path: Path to the XML file
+        config: Configuration dict with 'weights' and 'borrow_shift'
+        update_time: DateTime object for the UpdateTime field
+    """
+    modify_xml_file_to_path(xml_path, config, update_time, xml_path)
+
+
+def modify_xml_files_from_txt(xml_directory: str, txt_file: str, update_time_str: str, 
+                              in_place: bool = True, output_directory: str = None):
     """
     Main function to modify XML files in a directory based on a txt configuration file.
     
@@ -151,6 +165,9 @@ def modify_xml_files_from_txt(xml_directory: str, txt_file: str, update_time_str
         xml_directory: Directory containing XML files
         txt_file: Path to the txt configuration file
         update_time_str: Update time in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD HH:MM'
+        in_place: If True, modify files directly. If False, save as new copies (default: True)
+        output_directory: Directory to save modified files when in_place=False. 
+                         If None, saves to xml_directory with '_modified' suffix (default: None)
     """
     # Parse update time
     try:
@@ -161,6 +178,11 @@ def modify_xml_files_from_txt(xml_directory: str, txt_file: str, update_time_str
     except ValueError:
         print(f"Error: Invalid time format '{update_time_str}'. Use 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD HH:MM'")
         return
+    
+    # Create output directory if needed
+    if not in_place and output_directory:
+        os.makedirs(output_directory, exist_ok=True)
+        print(f"Output directory: {output_directory}")
     
     # Parse txt file
     configs = parse_txt_file(txt_file)
@@ -175,16 +197,51 @@ def modify_xml_files_from_txt(xml_directory: str, txt_file: str, update_time_str
             if index_name in configs:
                 xml_path = os.path.join(xml_directory, filename)
                 print(f"\nProcessing {filename}...")
-                modify_xml_file(xml_path, configs[index_name], update_time)
+                
+                # Determine output path
+                if in_place:
+                    output_path = xml_path
+                else:
+                    # Generate new filename with '_modified' suffix
+                    base_name = filename[:-4]  # Remove .xml
+                    new_filename = f"{base_name}_modified.xml"
+                    
+                    if output_directory:
+                        output_path = os.path.join(output_directory, new_filename)
+                    else:
+                        output_path = os.path.join(xml_directory, new_filename)
+                    
+                    print(f"Saving to: {output_path}")
+                
+                # Modify and save
+                modify_xml_file_to_path(xml_path, configs[index_name], update_time, output_path)
             else:
                 print(f"Warning: No configuration found for {filename}")
 
 
 # Example usage:
 if __name__ == "__main__":
-    # Example call
+    # Example 1: Modify files in place
     modify_xml_files_from_txt(
         xml_directory="/path/to/xml/files",
         txt_file="/path/to/config.txt",
-        update_time_str="2025-10-06 15:30:00"
+        update_time_str="2025-10-06 15:30:00",
+        in_place=True
+    )
+    
+    # Example 2: Save modified files to a different directory
+    modify_xml_files_from_txt(
+        xml_directory="/path/to/xml/files",
+        txt_file="/path/to/config.txt",
+        update_time_str="2025-10-06 15:30:00",
+        in_place=False,
+        output_directory="/path/to/output/directory"
+    )
+    
+    # Example 3: Save modified files with '_modified' suffix in the same directory
+    modify_xml_files_from_txt(
+        xml_directory="/path/to/xml/files",
+        txt_file="/path/to/config.txt",
+        update_time_str="2025-10-06 15:30:00",
+        in_place=False
     )
