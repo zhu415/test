@@ -1,3 +1,51 @@
+# Update BorrowShiftTermStructure
+borrow_shift = basket_methodology.find('BorrowShiftTermStructure')
+if borrow_shift is None:
+    borrow_shift = ET.SubElement(basket_methodology, 'BorrowShiftTermStructure')
+
+# Find positions of first Tenor and last Value
+first_tenor_index = None
+last_value_index = None
+
+for i, child in enumerate(borrow_shift):
+    if child.tag == 'Tenor' and first_tenor_index is None:
+        first_tenor_index = i
+    if child.tag == 'Value':
+        last_value_index = i
+
+# Remove existing Tenor and Value elements
+for tenor in borrow_shift.findall('Tenor'):
+    borrow_shift.remove(tenor)
+for value in borrow_shift.findall('Value'):
+    borrow_shift.remove(value)
+
+# Determine insertion points
+# If there were Tenors before, insert at that position; otherwise insert at beginning
+tenor_insert_pos = first_tenor_index if first_tenor_index is not None else 0
+
+# Add new Tenor elements at the correct position
+for idx, tenor in enumerate(config['borrow_shift'].keys()):
+    tenor_elem = ET.Element('Tenor')
+    tenor_elem.text = tenor
+    tenor_elem.tail = '\n                '
+    borrow_shift.insert(tenor_insert_pos + idx, tenor_elem)
+
+# Determine Value insertion point (after all Tenors)
+value_insert_pos = tenor_insert_pos + len(config['borrow_shift'])
+
+# Add new Value elements at the correct position
+for idx, value in enumerate(config['borrow_shift'].values()):
+    value_elem = ET.Element('Value')
+    value_elem.text = str(value)
+    value_elem.tail = '\n                '
+    borrow_shift.insert(value_insert_pos + idx, value_elem)
+
+# Fix the tail of the last Value element
+value_list = borrow_shift.findall('Value')
+if len(value_list) > 0:
+    value_list[-1].tail = '\n                '
+
+
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
