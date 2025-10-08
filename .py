@@ -279,14 +279,20 @@ def parse_time_value(time_value):
                 # Remove the days part, we only want HH:MM:SS
                 time_str = time_str.split()[-1]
             
-            # Parse HH:MM:SS format
-            parts = time_str.split(':')
-            if len(parts) == 3:
-                hours, minutes, seconds = map(int, parts)
-                return hours * 3600 + minutes * 60 + seconds
-            elif len(parts) == 2:
-                minutes, seconds = map(int, parts)
-                return minutes * 60 + seconds
+            # Parse HH:MM:SS format - handle microseconds
+            if ':' in time_str:
+                # Split by colon and handle potential microseconds
+                parts = time_str.split(':')
+                if len(parts) >= 3:
+                    hours = int(parts[0])
+                    minutes = int(parts[1])
+                    # Handle seconds with microseconds (e.g., "24.546000")
+                    seconds = int(float(parts[2].split('.')[0]))
+                    return hours * 3600 + minutes * 60 + seconds
+                elif len(parts) == 2:
+                    minutes = int(parts[0])
+                    seconds = int(float(parts[1].split('.')[0]))
+                    return minutes * 60 + seconds
         
         # If it's a number, assume it's already in seconds
         return int(float(time_value))
@@ -299,7 +305,7 @@ def format_time_hm(time_value):
     """
     Format time to hour and minutes notation.
     Input can be: datetime.time, timedelta, string like "3:55:24" or "0 days 03:55:24"
-    Examples: 3:55:24 -> 3h55m, 0:45:30 -> 45m
+    Examples: 3:55:24 -> 3h55m, 0:45:30 -> 45m, 0:05:30 -> 5m30s
     """
     total_seconds = parse_time_value(time_value)
     
@@ -308,13 +314,69 @@ def format_time_hm(time_value):
     
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
     
     if hours > 0:
         return f"{hours}h{minutes}m"
+    elif minutes > 0:
+        return f"{minutes}m{seconds}s"
     else:
-        return f"{minutes}m"
+        return f"{seconds}s"
 
-def format_number_k(value):
+def format_time_raw(time_value):
+    """
+    Format time to HH:MM:SS format for raw data.
+    Strips out "0 days" and microseconds, keeping only HH:MM:SS
+    """
+    if pd.isna(time_value):
+        return ''
+    
+    try:
+        # If it's already a timedelta
+        if isinstance(time_value, timedelta):
+            total_seconds = int(time_value.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # If it's a datetime.time object
+        if isinstance(time_value, time):
+            return f"{time_value.hour:02d}:{time_value.minute:02d}:{time_value.second:02d}"
+        
+        # If it's a string
+        if isinstance(time_value, str):
+            time_str = str(time_value).strip()
+            
+            # Handle "0 days HH:MM:SS.microseconds" format
+            if 'days' in time_str or 'day' in time_str:
+                # Extract the time part after "days"
+                time_str = time_str.split()[-1]
+            
+            # Remove microseconds if present
+            if '.' in time_str:
+                time_str = time_str.split('.')[0]
+            
+            # If already in HH:MM:SS format, return it
+            parts = time_str.split(':')
+            if len(parts) == 3:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                seconds = int(parts[2])
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # Fallback: convert to total seconds and format
+        total_seconds = parse_time_value(time_value)
+        if total_seconds is not None:
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+    except Exception as e:
+        print(f"Warning: Could not format time value '{time_value}': {e}")
+    
+    return str(time_value)
     """
     Format number to k/M notation with sign.
     Examples: 35531.56 -> +35k, -74206.05 -> -74k, 1500000 -> +1.5M
@@ -400,6 +462,11 @@ def create_final_dataframe(extracted_data, field_names):
                 final_data.append(final_row)
     
     raw_df = pd.DataFrame(final_data)
+    
+    # Format time columns in raw data to HH:MM:SS
+    for col in ['Calc time prod', 'Calc time qa', 'Max calc time prod', 'Max calc time qa']:
+        if col in raw_df.columns:
+            raw_df[col] = raw_df[col].apply(format_time_raw)
     
     # Create formatted version
     formatted_df = raw_df.copy()
