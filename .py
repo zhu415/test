@@ -415,17 +415,21 @@ def clean_numeric_value(value):
 def create_final_dataframe(extracted_data, field_names):
     """
     Create the final dataframe with all required columns.
+    Structure: One row per index (filename), with columns for each field name.
     
     Returns:
     tuple: (raw_dataframe, formatted_dataframe)
     """
-    # Create summary dataframe grouped by filename and field_name
+    # Create summary dataframe grouped by filename
     final_data = []
     
-    # Group by filename to process each file
+    # Group by filename to process each file (each file becomes one row)
     for filename in extracted_data['filename'].unique():
         file_data = extracted_data[extracted_data['filename'] == filename]
         
+        row_dict = {'Index': filename}
+        
+        # For each field name, add columns for PROD, QA, and Relative Diff
         for field_name in field_names:
             field_data = file_data[file_data['field_name'] == field_name]
             
@@ -443,48 +447,75 @@ def create_final_dataframe(extracted_data, field_names):
                 gnu2 = clean_numeric_value(gnu2_raw)
                 gnu_diff = clean_numeric_value(gnu_diff_raw)
                 
-                # Calculate diff / GNU 1
-                diff_div_gnu1 = (gnu_diff / gnu1) if (not pd.isna(gnu1) and gnu1 != 0) else ''
+                # Calculate relative diff
+                relative_diff = (gnu_diff / gnu1) if (not pd.isna(gnu1) and gnu1 != 0) else ''
                 
-                final_row = {
-                    'Index': filename,
-                    'Field': field_name,
-                    'GNU 1 ($)': gnu1_raw,
-                    'GNU 2 ($)': gnu2_raw,
-                    'GNU diff ($)': gnu_diff_raw,
-                    'diff / GNU 1': diff_div_gnu1,
-                    'Calc time prod': row.get('calc_time_prod', ''),
-                    'Calc time qa': row.get('calc_time_qa', ''),
-                    'Max calc time prod': row.get('max_calc_time_prod', ''),
-                    'Max calc time qa': row.get('max_calc_time_qa', '')
-                }
-                
-                final_data.append(final_row)
+                # Add to row dict
+                row_dict[f'{field_name} PROD'] = gnu1_raw
+                row_dict[f'{field_name} QA'] = gnu2_raw
+                row_dict[f'{field_name} Relative Diff'] = relative_diff
+            else:
+                # If field not found, add empty values
+                row_dict[f'{field_name} PROD'] = ''
+                row_dict[f'{field_name} QA'] = ''
+                row_dict[f'{field_name} Relative Diff'] = ''
+        
+        # Add time columns (these are the same for all fields in a file)
+        if not file_data.empty:
+            first_row = file_data.iloc[0]
+            row_dict['Calc time PROD'] = first_row.get('calc_time_prod', '')
+            row_dict['Calc time QA'] = first_row.get('calc_time_qa', '')
+            row_dict['Max Calc time PROD'] = first_row.get('max_calc_time_prod', '')
+            row_dict['Max Calc time QA'] = first_row.get('max_calc_time_qa', '')
+        else:
+            row_dict['Calc time PROD'] = ''
+            row_dict['Calc time QA'] = ''
+            row_dict['Max Calc time PROD'] = ''
+            row_dict['Max Calc time QA'] = ''
+        
+        final_data.append(row_dict)
     
     raw_df = pd.DataFrame(final_data)
     
+    # Reorder columns: Index, then field columns in order, then time columns
+    col_order = ['Index']
+    for field_name in field_names:
+        col_order.extend([
+            f'{field_name} PROD',
+            f'{field_name} QA',
+            f'{field_name} Relative Diff'
+        ])
+    col_order.extend(['Calc time PROD', 'Calc time QA', 'Max Calc time PROD', 'Max Calc time QA'])
+    
+    # Reorder columns (only include columns that exist)
+    existing_cols = [col for col in col_order if col in raw_df.columns]
+    raw_df = raw_df[existing_cols]
+    
     # Format time columns in raw data to HH:MM:SS
-    for col in ['Calc time prod', 'Calc time qa', 'Max calc time prod', 'Max calc time qa']:
+    for col in ['Calc time PROD', 'Calc time QA', 'Max Calc time PROD', 'Max Calc time QA']:
         if col in raw_df.columns:
             raw_df[col] = raw_df[col].apply(format_time_raw)
     
     # Create formatted version
     formatted_df = raw_df.copy()
     
-    # Format monetary columns
-    for col in ['GNU 1 ($)', 'GNU 2 ($)', 'GNU diff ($)']:
-        if col in formatted_df.columns:
-            formatted_df[col] = formatted_df[col].apply(lambda x: format_number_k(clean_numeric_value(x)))
+    # Format monetary columns (PROD and QA columns for each field)
+    for field_name in field_names:
+        for suffix in ['PROD', 'QA']:
+            col = f'{field_name} {suffix}'
+            if col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: format_number_k(clean_numeric_value(x)) if x != '' else '')
     
-    # Replace diff / GNU 1 with Relative diff (%) in formatted version
-    if 'diff / GNU 1' in formatted_df.columns:
-        formatted_df['Relative diff (%)'] = formatted_df['diff / GNU 1'].apply(
-            lambda x: f"{x*100:.2f}%" if (not pd.isna(x) and x != '') else ''
-        )
-        formatted_df = formatted_df.drop(columns=['diff / GNU 1'])
+    # Format Relative Diff columns as percentages
+    for field_name in field_names:
+        col = f'{field_name} Relative Diff'
+        if col in formatted_df.columns:
+            formatted_df[col] = formatted_df[col].apply(
+                lambda x: f"{x*100:.2f}%" if (not pd.isna(x) and x != '') else ''
+            )
     
     # Format time columns
-    for col in ['Calc time prod', 'Calc time qa', 'Max calc time prod', 'Max calc time qa']:
+    for col in ['Calc time PROD', 'Calc time QA', 'Max Calc time PROD', 'Max Calc time QA']:
         if col in formatted_df.columns:
             formatted_df[col] = formatted_df[col].apply(format_time_hm)
     
