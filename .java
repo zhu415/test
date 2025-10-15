@@ -1,3 +1,31 @@
+@Override
+public double getRealizedVarianceEstimate() {
+    double[][] returns = getReturnHistoryVectors();
+    int assetNum = myAssets.length;
+    
+    try {
+        // Use the helper method without funding cost adjustment
+        WeightCalculationResult calcResult = parent.calculateWeightsAndVolatility(
+            returns, null, null, false);
+        
+        // Calculate sum_i(VolatilityContribution_i / vol63_i)
+        double sumVolContribOverVol = 0.0;
+        for (int i = 0; i < assetNum; i++) {
+            double vol63 = Math.sqrt(calcResult.covar63[i][i] * 252);
+            sumVolContribOverVol += calcResult.volatilityContribution[i] / Math.max(vol63, 0.0001);
+        }
+        
+        // Calculate realized variance estimate
+        double maxPortfolioVol = Math.max(calcResult.portfolioVolatility21, calcResult.portfolioVolatility63);
+        double realizedVolEstimate = (maxPortfolioVol / parent.myVolatilityTarget) / sumVolContribOverVol;
+        
+        return realizedVolEstimate * realizedVolEstimate;
+    } catch (AMGException e) {
+        throw new RuntimeException("Error calculating realized variance estimate", e);
+    }
+}
+
+
 // Add this helper class to encapsulate the calculation results
 private static class WeightCalculationResult {
     double[] volatilityContribution;
