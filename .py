@@ -1,146 +1,179 @@
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 import os
 
-# Assuming you have the JavaToXMLConverter class defined elsewhere
-
-# If not, you’ll need to import it or define it here
-
-# from your_module import JavaToXMLConverter
-
-# Direct usage without argparse
-
-def convert_java_to_xml(java_file_path, output_xml_path=None, library_name=“DefaultLibrary”, preview_only=False):
-“””
-Convert Java code to XML template
-
-```
-Args:
-    java_file_path: Path to the Java source file
-    output_xml_path: Output XML file path (optional, will auto-generate if not provided)
-    library_name: Library name for XML template
-    preview_only: If True, only preview the modified code without creating XML
-
-Returns:
-    bool: True if successful, False otherwise
-"""
-
-# Determine output path if not provided
-if output_xml_path is None:
-    base_name = os.path.splitext(os.path.basename(java_file_path))[0]
-    output_xml_path = f"{base_name}.xml"
-
-# Create converter instance
-converter = JavaToXMLConverter()
-
-if preview_only:
-    # Preview mode - just show the modified Java code
-    if converter.read_java_file(java_file_path):
-        try:
-            processed_code = converter.process_java_code()
-            print("=" * 60)
-            print("MODIFIED JAVA CODE PREVIEW:")
-            print("=" * 60)
-            print(processed_code)
-            print("=" * 60)
-            return True
-        except Exception as e:
-            print(f"Error processing Java code: {e}")
-            return False
-else:
-    # Full conversion
-    success = converter.convert(java_file_path, output_xml_path, library_name)
-    if success:
-        print(f"Conversion completed successfully!")
-        print(f"Input:  {java_file_path}")
-        print(f"Output: {output_xml_path}")
-        return True
+def modify_xml_file(input_xml_path, index_name, output_dir="."):
+    """
+    Modify XML file for leveraged ETF product.
+    
+    Parameters:
+    -----------
+    input_xml_path : str
+        Path to the input XML file
+    index_name : str
+        Name of the index to insert
+    output_dir : str
+        Directory to save output files (default: current directory)
+    """
+    
+    # Parse the XML file
+    tree = ET.parse(input_xml_path)
+    root = tree.getroot()
+    
+    # ========== Step 1: Find all BuildDate elements ==========
+    build_dates = {}
+    
+    def find_build_dates(element, path=""):
+        """Recursively find all BuildDate elements and their parent paths"""
+        for child in element:
+            current_path = f"{path}/{child.tag}" if path else child.tag
+            
+            if child.tag == "BuildDate":
+                date_value = child.text.strip() if child.text else ""
+                if date_value not in build_dates:
+                    build_dates[date_value] = []
+                # Store path without 'Component' as it's uniform
+                clean_path = current_path.replace("/Component/", "").replace("Component/", "")
+                build_dates[date_value].append(clean_path)
+            
+            find_build_dates(child, current_path)
+    
+    find_build_dates(root)
+    
+    # Check if all BuildDates are the same
+    if len(build_dates) > 1:
+        print("WARNING: Different BuildDate values found:")
+        for date_val, paths in build_dates.items():
+            print(f"  Date: {date_val}")
+            for path in paths:
+                # Extract parent sections (exclude BuildDate itself)
+                parent_sections = " - ".join([p for p in path.split("/")[:-1] if p != "Component"])
+                print(f"    Location: {parent_sections}")
+        raise ValueError("BuildDate values are not consistent across the document")
+    
+    # Get the BuildDate
+    build_date_str = list(build_dates.keys())[0].strip()
+    build_date = datetime.strptime(build_date_str, "%Y-%m-%d")
+    print(f"BuildDate: {build_date_str}")
+    
+    # ========== Step 2: Find DataSource in CalibratedForward/MarketData ==========
+    expiry_date_str = None
+    
+    for calibrated_forward in root.iter("CalibratedForward"):
+        for market_data in calibrated_forward.findall("MarketData"):
+            data_source = market_data.find("DataSource")
+            if data_source is not None and data_source.text:
+                # Check if the text contains a date
+                text = data_source.text.strip()
+                try:
+                    # Try to parse as date
+                    datetime.strptime(text, "%Y-%m-%d")
+                    expiry_date_str = text
+                    break
+                except ValueError:
+                    continue
+        if expiry_date_str:
+            break
+    
+    if not expiry_date_str:
+        raise ValueError("Could not find ExpiryDate in CalibratedForward/MarketData/DataSource")
+    
+    expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d")
+    print(f"ExpiryDate: {expiry_date_str}")
+    
+    # ========== Step 3: Find Model name in Calculate section ==========
+    model_name = None
+    calculate_elem = root.find(".//Calculate")
+    
+    if calculate_elem is None:
+        raise ValueError("Could not find <Calculate> section")
+    
+    model_elem = calculate_elem.find("Model")
+    if model_elem is not None and model_elem.text:
+        model_name = model_elem.text.strip()
     else:
-        print("Conversion failed!")
-        return False
-```
+        raise ValueError("Could not find <Model> in <Calculate> section")
+    
+    print(f"Model Name: {model_name}")
+    
+    # ========== Step 4: Generate dates from BuildDate to ExpiryDate ==========
+    date_list = []
+    current_date = build_date
+    while current_date <= expiry_date:
+        date_list.append(current_date.strftime("%Y-%m-%d"))
+        current_date += timedelta(days=1)
+    
+    print(f"Generated {len(date_list)} dates from {build_date_str} to {expiry_date_str}")
+    
+    # ========== Step 5: Create three versions with different DateToMatch ==========
+    date_to_match_options = [
+        ("BuildDate", build_date_str),
+        ("ExpiryDate", expiry_date_str),
+        ("Empty", None)
+    ]
+    
+    for option_name, date_value in date_to_match_options:
+        # Create a copy of the tree
+        tree_copy = ET.ElementTree(ET.fromstring(ET.tostring(root)))
+        root_copy = tree_copy.getroot()
+        
+        # Find Calculate element in the copy
+        calculate_elem_copy = root_copy.find(".//Calculate")
+        
+        # Create IndexValuation element
+        index_valuation = ET.Element("IndexValuation")
+        
+        index_elem = ET.SubElement(index_valuation, "Index")
+        index_elem.text = index_name
+        
+        model_elem = ET.SubElement(index_valuation, "Model")
+        model_elem.text = model_name
+        
+        date_elem = ET.SubElement(index_valuation, "Date")
+        date_elem.text = ", ".join(date_list)
+        
+        # Insert IndexValuation right before Calculate
+        parent = None
+        for elem in root_copy.iter():
+            for child in elem:
+                if child.tag == "Calculate":
+                    parent = elem
+                    break
+            if parent is not None:
+                break
+        
+        if parent is not None:
+            # Find index of Calculate
+            calc_index = list(parent).index(calculate_elem_copy)
+            parent.insert(calc_index, index_valuation)
+        
+        # Modify DateToMatch in CalibratedForward
+        for calibrated_forward in root_copy.iter("CalibratedForward"):
+            date_to_match_elem = calibrated_forward.find("DateToMatch")
+            
+            if option_name == "Empty":
+                # Remove DateToMatch if it exists
+                if date_to_match_elem is not None:
+                    calibrated_forward.remove(date_to_match_elem)
+            else:
+                # Set or create DateToMatch
+                if date_to_match_elem is None:
+                    date_to_match_elem = ET.SubElement(calibrated_forward, "DateToMatch")
+                date_to_match_elem.text = date_value
+        
+        # Save the file
+        output_filename = f"{index_name}_{option_name}.xml"
+        output_path = os.path.join(output_dir, output_filename)
+        
+        tree_copy.write(output_path, encoding="utf-8", xml_declaration=True)
+        print(f"Saved: {output_path}")
+    
+    print("\nAll files generated successfully!")
 
-# Example usage - Method 1: Simple conversion with auto-generated output filename
-
-if **name** == “**main**”:
-# Specify your Java file path here
-java_file = “path/to/your/MyClass.java”  # <– Change this to your Java file path
-
-```
-# Option 1: Basic conversion (output will be MyClass.xml in same directory)
-convert_java_to_xml(java_file)
-
-# Option 2: Specify custom output path
-# convert_java_to_xml(java_file, "path/to/output/custom_name.xml")
-
-# Option 3: With custom library name
-# convert_java_to_xml(java_file, "output.xml", "MyCustomLibrary")
-
-# Option 4: Preview only (no XML file created)
-# convert_java_to_xml(java_file, preview_only=True)
-```
-
-# Example usage - Method 2: More explicit control
-
-def main_direct():
-# Configuration - MODIFY THESE PATHS
-JAVA_INPUT_FILE = “src/main/java/Example.java”  # <– Your Java file path
-XML_OUTPUT_FILE = “output/Example.xml”          # <– Your desired output path
-LIBRARY_NAME = “MyLibrary”                      # <– Your library name
-
-```
-# Create directories if needed
-output_dir = os.path.dirname(XML_OUTPUT_FILE)
-if output_dir and not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-
-# Run the conversion
-success = convert_java_to_xml(
-    java_file_path=JAVA_INPUT_FILE,
-    output_xml_path=XML_OUTPUT_FILE,
-    library_name=LIBRARY_NAME,
-    preview_only=False  # Set to True if you just want to preview
-)
-
-if success:
-    print("\n✓ Conversion successful!")
-else:
-    print("\n✗ Conversion failed!")
-
-return success
-```
-
-# Example usage - Method 3: Interactive
-
-def interactive_conversion():
-“”“Interactive mode - prompts for file paths”””
-print(“Java to XML Converter”)
-print(”-” * 30)
-
-```
-# Get input file
-java_file = input("Enter Java file path: ").strip()
-if not os.path.exists(java_file):
-    print(f"Error: File '{java_file}' not found!")
-    return False
-
-# Get output file (optional)
-output_file = input("Enter output XML path (press Enter for auto): ").strip()
-if not output_file:
-    output_file = None
-
-# Get library name
-library = input("Enter library name (press Enter for 'DefaultLibrary'): ").strip()
-if not library:
-    library = "DefaultLibrary"
-
-# Ask for preview
-preview = input("Preview only? (y/n, default: n): ").strip().lower() == 'y'
-
-# Run conversion
-return convert_java_to_xml(java_file, output_file, library, preview)
-```
-
-# Uncomment the method you want to use:
-
-# interactive_conversion()
-
-# main_direct()
+# Example usage:
+if __name__ == "__main__":
+    modify_xml_file(
+        input_xml_path="your_input_file.xml",
+        index_name="SPX500",
+        output_dir="./output"
+    )
