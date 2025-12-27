@@ -1,6 +1,7 @@
 from lxml import etree
 from datetime import datetime, timedelta
 import os
+import re
 
 def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
     """
@@ -18,7 +19,11 @@ def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
         Step size for date increments in days (default: 1 for daily, 7 for weekly, etc.)
     """
     
-    # Parse the XML file - lxml preserves formatting better
+    # Read the original file as text to preserve exact formatting
+    with open(input_xml_path, 'r', encoding='utf-8') as f:
+        original_xml = f.read()
+    
+    # Parse the XML file
     parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
     tree = etree.parse(input_xml_path, parser)
     root = tree.getroot()
@@ -108,7 +113,15 @@ def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
     
     print(f"Generated {len(date_list)} dates from {build_date_str} to {expiry_date_str} (step: {date_step} days)")
     
-    # ========== Step 5: Create three versions with different DateToMatch ==========
+    # ========== Step 5: Create IndexValuation XML string with proper indentation ==========
+    index_valuation_xml = "  <IndexValuation>\n"
+    index_valuation_xml += f"    <Index>{index_name}</Index>\n"
+    index_valuation_xml += f"    <Model>{model_name}</Model>\n"
+    for date_str in date_list:
+        index_valuation_xml += f"    <Date>{date_str}</Date>\n"
+    index_valuation_xml += "  </IndexValuation>\n"
+    
+    # ========== Step 6: Create three versions with different DateToMatch ==========
     date_to_match_options = [
         ("BuildDate", build_date_str),
         ("ExpiryDate", expiry_date_str),
@@ -119,86 +132,52 @@ def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
     os.makedirs(output_dir, exist_ok=True)
     
     for option_name, date_value in date_to_match_options:
-        # Create a deep copy by re-parsing to ensure complete independence
-        tree_copy = etree.parse(input_xml_path, parser)
-        root_copy = tree_copy.getroot()
+        # Start with original XML
+        modified_xml = original_xml
         
-        # Find Calculate element in the copy
-        calculate_elem_copy = root_copy.find(".//Calculate")
+        # Insert IndexValuation before <Calculate>
+        # Find the <Calculate> tag in the string
+        calculate_pattern = r'(\s*)<Calculate>'
+        match = re.search(calculate_pattern, modified_xml)
         
-        if calculate_elem_copy is None:
-            raise ValueError("Could not find <Calculate> element in the copy")
-        
-        # Find the parent of Calculate
-        parent = calculate_elem_copy.getparent()
-        
-        if parent is None:
-            raise ValueError("Could not find parent of <Calculate> element")
-        
-        print(f"\n{option_name}: Found Calculate element, parent is <{parent.tag}>")
-        
-        # Create IndexValuation element with proper indentation
-        index_valuation = etree.Element("IndexValuation")
-        
-        # Add Index element (4 spaces indentation)
-        index_elem = etree.SubElement(index_valuation, "Index")
-        index_elem.text = index_name
-        
-        # Add Model element (4 spaces indentation)
-        model_elem_new = etree.SubElement(index_valuation, "Model")
-        model_elem_new.text = model_name
-        
-        # Add multiple Date elements (4 spaces indentation for each)
-        for date_str in date_list:
-            date_elem = etree.SubElement(index_valuation, "Date")
-            date_elem.text = date_str
-        
-        # Find index of Calculate in parent
-        calc_index = list(parent).index(calculate_elem_copy)
-        print(f"{option_name}: Calculate is at index {calc_index} in parent")
-        
-        # Insert IndexValuation right before Calculate
-        parent.insert(calc_index, index_valuation)
-        print(f"{option_name}: Inserted IndexValuation at index {calc_index}")
+        if match:
+            # Insert IndexValuation right before <Calculate>
+            insert_position = match.start()
+            modified_xml = modified_xml[:insert_position] + index_valuation_xml + modified_xml[insert_position:]
+            print(f"{option_name}: Inserted IndexValuation before Calculate")
+        else:
+            raise ValueError("Could not find <Calculate> in XML")
         
         # Modify DateToMatch in CalibratedForward
-        for calibrated_forward in root_copy.iter("CalibratedForward"):
-            date_to_match_elem = calibrated_forward.find("DateToMatch")
-            
-            if option_name == "Empty":
-                # Remove DateToMatch if it exists
-                if date_to_match_elem is not None:
-                    calibrated_forward.remove(date_to_match_elem)
-                    print(f"{option_name}: Removed DateToMatch from CalibratedForward")
+        if option_name == "Empty":
+            # Remove all <DateToMatch>...</DateToMatch> lines
+            modified_xml = re.sub(r'\s*<DateToMatch>.*?</DateToMatch>\s*\n?', '', modified_xml)
+            print(f"{option_name}: Removed all DateToMatch elements")
+        else:
+            # Replace DateToMatch content or add if it doesn't exist
+            # First, try to replace existing DateToMatch
+            date_to_match_pattern = r'(<DateToMatch>).*?(</DateToMatch>)'
+            if re.search(date_to_match_pattern, modified_xml):
+                modified_xml = re.sub(date_to_match_pattern, rf'\1{date_value}\2', modified_xml)
+                print(f"{option_name}: Updated DateToMatch to {date_value}")
             else:
-                # Set or create DateToMatch
-                if date_to_match_elem is None:
-                    date_to_match_elem = etree.SubElement(calibrated_forward, "DateToMatch")
-                    print(f"{option_name}: Created new DateToMatch element")
-                date_to_match_elem.text = date_value
-                print(f"{option_name}: Set DateToMatch to {date_value}")
+                # If DateToMatch doesn't exist, add it inside CalibratedForward
+                # Find CalibratedForward closing tag and add before it
+                calibrated_pattern = r'(</CalibratedForward>)'
+                # Detect the indentation of the closing tag
+                indent_match = re.search(r'\n(\s*)</CalibratedForward>', modified_xml)
+                if indent_match:
+                    indent = indent_match.group(1)
+                    date_to_match_line = f'{indent}  <DateToMatch>{date_value}</DateToMatch>\n'
+                    modified_xml = re.sub(calibrated_pattern, date_to_match_line + r'\1', modified_xml, count=1)
+                    print(f"{option_name}: Added new DateToMatch element with value {date_value}")
         
-        # Save the file - first to a temporary location to manually add indentation
+        # Save the file
         output_filename = f"{index_name}_{option_name}.xml"
         output_path = os.path.join(output_dir, output_filename)
         
-        # Convert to string for manual indentation formatting
-        xml_string = etree.tostring(tree_copy, encoding='unicode', xml_declaration=False)
-        
-        # Add proper indentation to IndexValuation section
-        # This is a bit hacky but preserves the rest of the formatting
-        xml_string = xml_string.replace('<IndexValuation>', '  <IndexValuation>\n')
-        xml_string = xml_string.replace('</IndexValuation>', '  </IndexValuation>\n')
-        xml_string = xml_string.replace('<Index>', '    <Index>')
-        xml_string = xml_string.replace('<Model>', '    <Model>')
-        xml_string = xml_string.replace('</Model>', '</Model>\n')
-        xml_string = xml_string.replace('<Date>', '    <Date>')
-        xml_string = xml_string.replace('</Date>', '</Date>\n')
-        
-        # Write with XML declaration
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write('<?xml version="1.0" encoding="utf-8"?>\n')
-            f.write(xml_string)
+            f.write(modified_xml)
         
         print(f"Saved: {output_path}")
     
