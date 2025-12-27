@@ -2,7 +2,7 @@ from lxml import etree
 from datetime import datetime, timedelta
 import os
 
-def modify_xml_file(input_xml_path, index_name, output_dir="."):
+def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
     """
     Modify XML file for leveraged ETF product while preserving original formatting.
     
@@ -14,6 +14,8 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         Name of the index to insert
     output_dir : str
         Directory to save output files (default: current directory)
+    date_step : int
+        Step size for date increments in days (default: 1 for daily, 7 for weekly, etc.)
     """
     
     # Parse the XML file - lxml preserves formatting better
@@ -102,9 +104,9 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
     current_date = build_date
     while current_date <= expiry_date:
         date_list.append(current_date.strftime("%Y-%m-%d"))
-        current_date += timedelta(days=1)
+        current_date += timedelta(days=date_step)
     
-    print(f"Generated {len(date_list)} dates from {build_date_str} to {expiry_date_str}")
+    print(f"Generated {len(date_list)} dates from {build_date_str} to {expiry_date_str} (step: {date_step} days)")
     
     # ========== Step 5: Create three versions with different DateToMatch ==========
     date_to_match_options = [
@@ -135,17 +137,21 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         
         print(f"\n{option_name}: Found Calculate element, parent is <{parent.tag}>")
         
-        # Create IndexValuation element
+        # Create IndexValuation element with proper indentation
         index_valuation = etree.Element("IndexValuation")
         
+        # Add Index element (4 spaces indentation)
         index_elem = etree.SubElement(index_valuation, "Index")
         index_elem.text = index_name
         
+        # Add Model element (4 spaces indentation)
         model_elem_new = etree.SubElement(index_valuation, "Model")
         model_elem_new.text = model_name
         
-        date_elem = etree.SubElement(index_valuation, "Date")
-        date_elem.text = ", ".join(date_list)
+        # Add multiple Date elements (4 spaces indentation for each)
+        for date_str in date_list:
+            date_elem = etree.SubElement(index_valuation, "Date")
+            date_elem.text = date_str
         
         # Find index of Calculate in parent
         calc_index = list(parent).index(calculate_elem_copy)
@@ -154,10 +160,6 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         # Insert IndexValuation right before Calculate
         parent.insert(calc_index, index_valuation)
         print(f"{option_name}: Inserted IndexValuation at index {calc_index}")
-        
-        # Verify insertion
-        new_calc_index = list(parent).index(calculate_elem_copy)
-        print(f"{option_name}: After insertion, Calculate is now at index {new_calc_index}")
         
         # Modify DateToMatch in CalibratedForward
         for calibrated_forward in root_copy.iter("CalibratedForward"):
@@ -176,17 +178,28 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
                 date_to_match_elem.text = date_value
                 print(f"{option_name}: Set DateToMatch to {date_value}")
         
-        # Save the file with original formatting preserved
+        # Save the file - first to a temporary location to manually add indentation
         output_filename = f"{index_name}_{option_name}.xml"
         output_path = os.path.join(output_dir, output_filename)
         
-        # Write with UTF-8 encoding and preserve formatting
-        tree_copy.write(
-            output_path, 
-            encoding="utf-8", 
-            xml_declaration=True,
-            pretty_print=False  # Don't reformat - keep original formatting
-        )
+        # Convert to string for manual indentation formatting
+        xml_string = etree.tostring(tree_copy, encoding='unicode', xml_declaration=False)
+        
+        # Add proper indentation to IndexValuation section
+        # This is a bit hacky but preserves the rest of the formatting
+        xml_string = xml_string.replace('<IndexValuation>', '  <IndexValuation>\n')
+        xml_string = xml_string.replace('</IndexValuation>', '  </IndexValuation>\n')
+        xml_string = xml_string.replace('<Index>', '    <Index>')
+        xml_string = xml_string.replace('<Model>', '    <Model>')
+        xml_string = xml_string.replace('</Model>', '</Model>\n')
+        xml_string = xml_string.replace('<Date>', '    <Date>')
+        xml_string = xml_string.replace('</Date>', '</Date>\n')
+        
+        # Write with XML declaration
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('<?xml version="1.0" encoding="utf-8"?>\n')
+            f.write(xml_string)
+        
         print(f"Saved: {output_path}")
     
     print("\nAll files generated successfully!")
@@ -194,8 +207,18 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
 
 # Example usage:
 if __name__ == "__main__":
+    # Daily dates (default)
     modify_xml_file(
         input_xml_path="your_input_file.xml",
         index_name="SPX500",
-        output_dir="./output"
+        output_dir="./output",
+        date_step=1  # Daily
+    )
+    
+    # Weekly dates
+    modify_xml_file(
+        input_xml_path="your_input_file.xml",
+        index_name="SPX500_Weekly",
+        output_dir="./output",
+        date_step=7  # Weekly
     )
