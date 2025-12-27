@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import os
+from copy import deepcopy
 
 def modify_xml_file(input_xml_path, index_name, output_dir="."):
     """
@@ -16,7 +17,7 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         Directory to save output files (default: current directory)
     """
     
-    # Parse the XML file
+    # Parse the XML file - preserve formatting
     tree = ET.parse(input_xml_path)
     root = tree.getroot()
     
@@ -112,9 +113,12 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         ("Empty", None)
     ]
     
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
     for option_name, date_value in date_to_match_options:
-        # Create a copy of the tree
-        tree_copy = ET.ElementTree(ET.fromstring(ET.tostring(root)))
+        # Create a deep copy by re-parsing to ensure complete independence
+        tree_copy = ET.parse(input_xml_path)
         root_copy = tree_copy.getroot()
         
         # Find Calculate element in the copy
@@ -123,14 +127,21 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         # Create IndexValuation element
         index_valuation = ET.Element("IndexValuation")
         
+        # Add proper indentation (optional, for readability)
+        index_valuation.text = "\n    "
+        index_valuation.tail = "\n"
+        
         index_elem = ET.SubElement(index_valuation, "Index")
         index_elem.text = index_name
+        index_elem.tail = "\n    "
         
-        model_elem = ET.SubElement(index_valuation, "Model")
-        model_elem.text = model_name
+        model_elem_new = ET.SubElement(index_valuation, "Model")
+        model_elem_new.text = model_name
+        model_elem_new.tail = "\n    "
         
         date_elem = ET.SubElement(index_valuation, "Date")
         date_elem.text = ", ".join(date_list)
+        date_elem.tail = "\n"
         
         # Insert IndexValuation right before Calculate
         parent = None
@@ -146,6 +157,8 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
             # Find index of Calculate
             calc_index = list(parent).index(calculate_elem_copy)
             parent.insert(calc_index, index_valuation)
+        else:
+            raise ValueError("Could not find parent of <Calculate> element")
         
         # Modify DateToMatch in CalibratedForward
         for calibrated_forward in root_copy.iter("CalibratedForward"):
@@ -161,14 +174,16 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
                     date_to_match_elem = ET.SubElement(calibrated_forward, "DateToMatch")
                 date_to_match_elem.text = date_value
         
-        # Save the file
+        # Save the file with proper formatting
         output_filename = f"{index_name}_{option_name}.xml"
         output_path = os.path.join(output_dir, output_filename)
         
+        # Write with UTF-8 encoding and XML declaration
         tree_copy.write(output_path, encoding="utf-8", xml_declaration=True)
         print(f"Saved: {output_path}")
     
     print("\nAll files generated successfully!")
+    return True
 
 # Example usage:
 if __name__ == "__main__":
