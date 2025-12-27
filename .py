@@ -1,41 +1,47 @@
 import pandas as pd
 from lxml import etree
 import os
+import glob
 
-def extract_valuation_results(output_xml_path, index_name):
+def extract_valuation_results(input_xml_path, output_xml_path):
     """
-    Extract IndexValuationResults from output XML and match with dates.
+    Extract IndexValuationResults from output XML and match with dates from input XML.
     
     Parameters:
     -----------
+    input_xml_path : str
+        Path to the input XML file (contains IndexValuation with dates)
     output_xml_path : str
-        Path to the output XML file (after running through C++ library)
-    index_name : str
-        Name of the index
+        Path to the output XML file (contains IndexValuationResults with values)
         
     Returns:
     --------
     pd.DataFrame
-        DataFrame with columns: Index, Date, Value
+        DataFrame with columns: Date, Value
     """
     
-    # Parse the output XML
     parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
-    output_tree = etree.parse(output_xml_path, parser)
-    output_root = output_tree.getroot()
     
-    # Extract dates from IndexValuation section
+    # Parse the INPUT XML to get dates
+    input_tree = etree.parse(input_xml_path, parser)
+    input_root = input_tree.getroot()
+    
+    # Extract dates from IndexValuation section in INPUT file
     date_list = []
-    index_valuation = output_root.find(".//IndexValuation")
+    index_valuation = input_root.find(".//IndexValuation")
     
     if index_valuation is None:
-        raise ValueError(f"Could not find IndexValuation in {output_xml_path}")
+        raise ValueError(f"Could not find IndexValuation in {input_xml_path}")
     
     for date_elem in index_valuation.findall("Date"):
         if date_elem.text:
             date_list.append(date_elem.text.strip())
     
-    # Extract values from IndexValuationResults
+    # Parse the OUTPUT XML to get values
+    output_tree = etree.parse(output_xml_path, parser)
+    output_root = output_tree.getroot()
+    
+    # Extract values from IndexValuationResults in OUTPUT file
     values = []
     index_valuation_results = output_root.find(".//IndexValuationResults")
     
@@ -48,11 +54,12 @@ def extract_valuation_results(output_xml_path, index_name):
     
     # Check if number of values matches number of dates
     if len(values) != len(date_list):
-        print(f"WARNING in {output_xml_path}: Number of values ({len(values)}) doesn't match number of dates ({len(date_list)})")
+        print(f"WARNING: Number of values ({len(values)}) doesn't match number of dates ({len(date_list)})")
+        print(f"  Input file: {input_xml_path}")
+        print(f"  Output file: {output_xml_path}")
     
     # Create DataFrame
     df = pd.DataFrame({
-        'Index': [index_name] * len(date_list),
         'Date': date_list,
         'Value': values[:len(date_list)]  # Use only as many values as we have dates
     })
@@ -60,16 +67,16 @@ def extract_valuation_results(output_xml_path, index_name):
     return df
 
 
-def process_all_output_files(output_dir, indices):
+def process_directory(directory):
     """
-    Process all output XML files and combine results into a single DataFrame.
+    Process all input and output XML files in a directory.
     
     Parameters:
     -----------
-    output_dir : str
-        Directory containing the output XML files
-    indices : list
-        List of index names used
+    directory : str
+        Directory containing both input and output XML files
+        Input files: {indexName}_{DateToMatch_Type}.xml
+        Output files: OUT_{indexName}_{DateToMatch_Type}.xml
         
     Returns:
     --------
@@ -77,33 +84,51 @@ def process_all_output_files(output_dir, indices):
         Combined DataFrame with columns: Index, DateToMatch_Type, Date, Value
     """
     
-    date_to_match_types = ["BuildDate", "ExpiryDate", "Empty"]
+    # Find all input XML files (non-OUT files)
+    all_files = glob.glob(os.path.join(directory, "*.xml"))
+    input_files = [f for f in all_files if not os.path.basename(f).startswith("OUT_")]
+    
     all_data = []
     
-    for index_name in indices:
-        for dtm_type in date_to_match_types:
-            # Construct the output filename
-            output_filename = f"{index_name}_{dtm_type}.xml"
-            output_path = os.path.join(output_dir, output_filename)
+    for input_path in input_files:
+        input_filename = os.path.basename(input_path)
+        
+        # Construct corresponding output filename
+        output_filename = "OUT_" + input_filename
+        output_path = os.path.join(directory, output_filename)
+        
+        if not os.path.exists(output_path):
+            print(f"WARNING: Output file not found for {input_filename}")
+            print(f"  Expected: {output_filename}")
+            continue
+        
+        print(f"Processing: {input_filename} -> {output_filename}")
+        
+        try:
+            # Parse filename to extract index name and DateToMatch type
+            # Expected format: {indexName}_{DateToMatch_Type}.xml
+            base_name = input_filename.replace(".xml", "")
+            parts = base_name.rsplit("_", 1)  # Split from the right, only once
             
-            if not os.path.exists(output_path):
-                print(f"WARNING: File not found: {output_path}")
+            if len(parts) == 2:
+                index_name = parts[0]
+                dtm_type = parts[1]
+            else:
+                print(f"WARNING: Could not parse filename: {input_filename}")
                 continue
             
-            print(f"Processing: {output_filename}")
+            # Extract data from input and output files
+            df = extract_valuation_results(input_path, output_path)
             
-            try:
-                # Extract data from this file
-                df = extract_valuation_results(output_path, index_name)
-                
-                # Add DateToMatch_Type column
-                df['DateToMatch_Type'] = dtm_type
-                
-                all_data.append(df)
-                
-            except Exception as e:
-                print(f"ERROR processing {output_filename}: {str(e)}")
-                continue
+            # Add Index and DateToMatch_Type columns
+            df['Index'] = index_name
+            df['DateToMatch_Type'] = dtm_type
+            
+            all_data.append(df)
+            
+        except Exception as e:
+            print(f"ERROR processing {input_filename}: {str(e)}")
+            continue
     
     # Combine all dataframes
     if all_data:
@@ -115,22 +140,29 @@ def process_all_output_files(output_dir, indices):
         return pd.DataFrame(columns=['Index', 'DateToMatch_Type', 'Date', 'Value'])
 
 
-def save_results_to_csv(output_dir, indices, csv_output_path):
+def save_results_to_csv(directory, csv_output_path):
     """
-    Process all output files and save to CSV.
+    Process all files in a directory and save to CSV.
     
     Parameters:
     -----------
-    output_dir : str
-        Directory containing the output XML files
-    indices : list
-        List of index names used
+    directory : str
+        Directory containing both input and output XML files
     csv_output_path : str
         Path where the CSV file should be saved
+        
+    Returns:
+    --------
+    pd.DataFrame
+        The combined DataFrame
     """
     
     # Process all files
-    df = process_all_output_files(output_dir, indices)
+    df = process_directory(directory)
+    
+    if len(df) == 0:
+        print("No data extracted!")
+        return df
     
     # Save to CSV
     df.to_csv(csv_output_path, index=False)
@@ -156,7 +188,7 @@ def create_pivot_table(df, output_path=None):
     Parameters:
     -----------
     df : pd.DataFrame
-        DataFrame from process_all_output_files
+        DataFrame from process_directory
     output_path : str, optional
         Path to save the pivot table CSV
         
@@ -186,17 +218,14 @@ def create_pivot_table(df, output_path=None):
 
 # Example usage:
 if __name__ == "__main__":
-    # Define the indices you used
-    indices = ["SPX500", "SPX500_Weekly"]
-    
-    # Process all output files and save to CSV
+    # Process all files in the directory
     df = save_results_to_csv(
-        output_dir="./output",
-        indices=indices,
+        directory="./output",
         csv_output_path="./valuation_results.csv"
     )
     
-    # Create pivot table
-    pivot = create_pivot_table(df, output_path="./valuation_results_pivot.csv")
-    print("\nPivot Table:")
-    print(pivot.head())
+    # Create pivot table if data was extracted
+    if len(df) > 0:
+        pivot = create_pivot_table(df, output_path="./valuation_results_pivot.csv")
+        print("\nPivot Table Preview:")
+        print(pivot.head())
