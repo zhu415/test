@@ -132,11 +132,31 @@ def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
     os.makedirs(output_dir, exist_ok=True)
     
     for option_name, date_value in date_to_match_options:
-        # Start with original XML
-        modified_xml = original_xml
+        # Parse a fresh copy for each output
+        tree_copy = etree.parse(input_xml_path, parser)
+        root_copy = tree_copy.getroot()
         
-        # Insert IndexValuation before <Calculate>
-        # Find the <Calculate> tag in the string
+        # Modify DateToMatch in CalibratedForward using the parsed tree
+        for calibrated_forward in root_copy.iter("CalibratedForward"):
+            date_to_match_elem = calibrated_forward.find("DateToMatch")
+            
+            if option_name == "Empty":
+                # Remove DateToMatch if it exists
+                if date_to_match_elem is not None:
+                    calibrated_forward.remove(date_to_match_elem)
+                    print(f"{option_name}: Removed DateToMatch from CalibratedForward")
+            else:
+                # Set or create DateToMatch
+                if date_to_match_elem is None:
+                    date_to_match_elem = etree.SubElement(calibrated_forward, "DateToMatch")
+                    print(f"{option_name}: Created new DateToMatch element")
+                date_to_match_elem.text = date_value
+                print(f"{option_name}: Set DateToMatch to {date_value}")
+        
+        # Convert modified tree to string
+        modified_xml = etree.tostring(root_copy, encoding='unicode')
+        
+        # Insert IndexValuation before <Calculate> using string manipulation
         calculate_pattern = r'(\s*)<Calculate>'
         match = re.search(calculate_pattern, modified_xml)
         
@@ -148,35 +168,12 @@ def modify_xml_file(input_xml_path, index_name, output_dir=".", date_step=1):
         else:
             raise ValueError("Could not find <Calculate> in XML")
         
-        # Modify DateToMatch in CalibratedForward
-        if option_name == "Empty":
-            # Remove all <DateToMatch>...</DateToMatch> lines
-            modified_xml = re.sub(r'\s*<DateToMatch>.*?</DateToMatch>\s*\n?', '', modified_xml)
-            print(f"{option_name}: Removed all DateToMatch elements")
-        else:
-            # Replace DateToMatch content or add if it doesn't exist
-            # First, try to replace existing DateToMatch
-            date_to_match_pattern = r'(<DateToMatch>).*?(</DateToMatch>)'
-            if re.search(date_to_match_pattern, modified_xml):
-                modified_xml = re.sub(date_to_match_pattern, rf'\1{date_value}\2', modified_xml)
-                print(f"{option_name}: Updated DateToMatch to {date_value}")
-            else:
-                # If DateToMatch doesn't exist, add it inside CalibratedForward
-                # Find CalibratedForward closing tag and add before it
-                calibrated_pattern = r'(</CalibratedForward>)'
-                # Detect the indentation of the closing tag
-                indent_match = re.search(r'\n(\s*)</CalibratedForward>', modified_xml)
-                if indent_match:
-                    indent = indent_match.group(1)
-                    date_to_match_line = f'{indent}  <DateToMatch>{date_value}</DateToMatch>\n'
-                    modified_xml = re.sub(calibrated_pattern, date_to_match_line + r'\1', modified_xml, count=1)
-                    print(f"{option_name}: Added new DateToMatch element with value {date_value}")
-        
         # Save the file
         output_filename = f"{index_name}_{option_name}.xml"
         output_path = os.path.join(output_dir, output_filename)
         
         with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('<?xml version="1.0" encoding="utf-8"?>\n')
             f.write(modified_xml)
         
         print(f"Saved: {output_path}")
