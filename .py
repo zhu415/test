@@ -1,9 +1,8 @@
 import pandas as pd
 from lxml import etree
 import os
-from datetime import datetime, timedelta
 
-def extract_valuation_results(output_xml_path, original_input_path, index_name, date_step=1):
+def extract_valuation_results(output_xml_path, index_name):
     """
     Extract IndexValuationResults from output XML and match with dates.
     
@@ -11,12 +10,8 @@ def extract_valuation_results(output_xml_path, original_input_path, index_name, 
     -----------
     output_xml_path : str
         Path to the output XML file (after running through C++ library)
-    original_input_path : str
-        Path to the original input XML file (to get BuildDate and ExpiryDate)
     index_name : str
         Name of the index
-    date_step : int
-        Step size used when generating dates
         
     Returns:
     --------
@@ -24,49 +19,21 @@ def extract_valuation_results(output_xml_path, original_input_path, index_name, 
         DataFrame with columns: Index, Date, Value
     """
     
-    # Parse the original input to get BuildDate and ExpiryDate
-    parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
-    original_tree = etree.parse(original_input_path, parser)
-    original_root = original_tree.getroot()
-    
-    # Get BuildDate
-    build_dates = {}
-    for build_date_elem in original_root.iter("BuildDate"):
-        if build_date_elem.text:
-            date_value = build_date_elem.text.strip()
-            build_dates[date_value] = True
-    
-    build_date_str = list(build_dates.keys())[0].strip()
-    build_date = datetime.strptime(build_date_str, "%Y-%m-%d")
-    
-    # Get ExpiryDate
-    expiry_date_str = None
-    for calibrated_forward in original_root.iter("CalibratedForward"):
-        for market_data in calibrated_forward.findall("MarketData"):
-            data_source = market_data.find("DataSource")
-            if data_source is not None and data_source.text:
-                text = data_source.text.strip()
-                try:
-                    datetime.strptime(text, "%Y-%m-%d")
-                    expiry_date_str = text
-                    break
-                except ValueError:
-                    continue
-        if expiry_date_str:
-            break
-    
-    expiry_date = datetime.strptime(expiry_date_str, "%Y-%m-%d")
-    
-    # Generate the same date list
-    date_list = []
-    current_date = build_date
-    while current_date <= expiry_date:
-        date_list.append(current_date.strftime("%Y-%m-%d"))
-        current_date += timedelta(days=date_step)
-    
     # Parse the output XML
+    parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
     output_tree = etree.parse(output_xml_path, parser)
     output_root = output_tree.getroot()
+    
+    # Extract dates from IndexValuation section
+    date_list = []
+    index_valuation = output_root.find(".//IndexValuation")
+    
+    if index_valuation is None:
+        raise ValueError(f"Could not find IndexValuation in {output_xml_path}")
+    
+    for date_elem in index_valuation.findall("Date"):
+        if date_elem.text:
+            date_list.append(date_elem.text.strip())
     
     # Extract values from IndexValuationResults
     values = []
@@ -81,7 +48,7 @@ def extract_valuation_results(output_xml_path, original_input_path, index_name, 
     
     # Check if number of values matches number of dates
     if len(values) != len(date_list):
-        print(f"WARNING: Number of values ({len(values)}) doesn't match number of dates ({len(date_list)})")
+        print(f"WARNING in {output_xml_path}: Number of values ({len(values)}) doesn't match number of dates ({len(date_list)})")
     
     # Create DataFrame
     df = pd.DataFrame({
@@ -93,7 +60,7 @@ def extract_valuation_results(output_xml_path, original_input_path, index_name, 
     return df
 
 
-def process_all_output_files(output_dir, original_input_path, indices, date_step=1):
+def process_all_output_files(output_dir, indices):
     """
     Process all output XML files and combine results into a single DataFrame.
     
@@ -101,12 +68,8 @@ def process_all_output_files(output_dir, original_input_path, indices, date_step
     -----------
     output_dir : str
         Directory containing the output XML files
-    original_input_path : str
-        Path to the original input XML file
     indices : list
         List of index names used
-    date_step : int
-        Step size used when generating dates
         
     Returns:
     --------
@@ -131,7 +94,7 @@ def process_all_output_files(output_dir, original_input_path, indices, date_step
             
             try:
                 # Extract data from this file
-                df = extract_valuation_results(output_path, original_input_path, index_name, date_step)
+                df = extract_valuation_results(output_path, index_name)
                 
                 # Add DateToMatch_Type column
                 df['DateToMatch_Type'] = dtm_type
@@ -152,7 +115,7 @@ def process_all_output_files(output_dir, original_input_path, indices, date_step
         return pd.DataFrame(columns=['Index', 'DateToMatch_Type', 'Date', 'Value'])
 
 
-def save_results_to_csv(output_dir, original_input_path, indices, csv_output_path, date_step=1):
+def save_results_to_csv(output_dir, indices, csv_output_path):
     """
     Process all output files and save to CSV.
     
@@ -160,18 +123,14 @@ def save_results_to_csv(output_dir, original_input_path, indices, csv_output_pat
     -----------
     output_dir : str
         Directory containing the output XML files
-    original_input_path : str
-        Path to the original input XML file
     indices : list
         List of index names used
     csv_output_path : str
         Path where the CSV file should be saved
-    date_step : int
-        Step size used when generating dates
     """
     
     # Process all files
-    df = process_all_output_files(output_dir, original_input_path, indices, date_step)
+    df = process_all_output_files(output_dir, indices)
     
     # Save to CSV
     df.to_csv(csv_output_path, index=False)
@@ -190,20 +149,54 @@ def save_results_to_csv(output_dir, original_input_path, indices, csv_output_pat
     return df
 
 
+def create_pivot_table(df, output_path=None):
+    """
+    Create a pivot table for easier comparison across DateToMatch types.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame from process_all_output_files
+    output_path : str, optional
+        Path to save the pivot table CSV
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Pivot table with Date as index, and columns for each Index-DateToMatch combination
+    """
+    
+    # Create a combined column name
+    df['Index_DTM'] = df['Index'] + '_' + df['DateToMatch_Type']
+    
+    # Create pivot table
+    pivot = df.pivot_table(
+        values='Value',
+        index='Date',
+        columns='Index_DTM',
+        aggfunc='first'
+    )
+    
+    if output_path:
+        pivot.to_csv(output_path)
+        print(f"Pivot table saved to: {output_path}")
+    
+    return pivot
+
+
 # Example usage:
 if __name__ == "__main__":
     # Define the indices you used
-    indices = ["SPX500", "SPX500_Weekly"]  # Adjust based on your actual indices
+    indices = ["SPX500", "SPX500_Weekly"]
     
     # Process all output files and save to CSV
     df = save_results_to_csv(
         output_dir="./output",
-        original_input_path="your_input_file.xml",
         indices=indices,
-        csv_output_path="./valuation_results.csv",
-        date_step=1  # Use the same date_step as when you created the files
+        csv_output_path="./valuation_results.csv"
     )
     
-    # You can also access the dataframe directly
-    print("\nFull DataFrame:")
-    print(df)
+    # Create pivot table
+    pivot = create_pivot_table(df, output_path="./valuation_results_pivot.csv")
+    print("\nPivot Table:")
+    print(pivot.head())
