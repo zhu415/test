@@ -1,231 +1,251 @@
 import pandas as pd
-from lxml import etree
-import os
-import glob
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from datetime import datetime
 
-def extract_valuation_results(input_xml_path, output_xml_path):
+def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
     """
-    Extract IndexValuationResults from output XML and match with dates from input XML.
+    Visualize valuation results with three subplots for different DateToMatch types.
     
     Parameters:
     -----------
-    input_xml_path : str
-        Path to the input XML file (contains IndexValuation with dates)
-    output_xml_path : str
-        Path to the output XML file (contains IndexValuationResults with values)
-        
-    Returns:
-    --------
-    pd.DataFrame
-        DataFrame with columns: Date, Value
+    df : pd.DataFrame
+        DataFrame from process_directory with columns: Index, DateToMatch_Type, Date, Value
+    output_path : str, optional
+        Path to save the figure
+    figsize : tuple, optional
+        Figure size (width, height)
     """
     
-    parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
+    # Convert Date column to datetime
+    df['Date'] = pd.to_datetime(df['Date'])
     
-    # Parse the INPUT XML to get dates
-    input_tree = etree.parse(input_xml_path, parser)
-    input_root = input_tree.getroot()
+    # Get unique indices and DateToMatch types
+    indices = df['Index'].unique()
+    date_to_match_types = ['BuildDate', 'ExpiryDate', 'Empty']
     
-    # Extract dates from IndexValuation section in INPUT file
-    date_list = []
-    index_valuation = input_root.find(".//IndexValuation")
+    if len(indices) != 2:
+        print(f"WARNING: Expected 2 indices, found {len(indices)}: {indices}")
+        print("Visualization is designed for exactly 2 indices")
     
-    if index_valuation is None:
-        raise ValueError(f"Could not find IndexValuation in {input_xml_path}")
+    index1 = indices[0]
+    index2 = indices[1] if len(indices) > 1 else indices[0]
     
-    for date_elem in index_valuation.findall("Date"):
-        if date_elem.text:
-            date_list.append(date_elem.text.strip())
+    # Calculate global y-axis ranges for consistency across all subplots
+    values1 = df[df['Index'] == index1]['Value']
+    values2 = df[df['Index'] == index2]['Value']
     
-    # Parse the OUTPUT XML to get values
-    output_tree = etree.parse(output_xml_path, parser)
-    output_root = output_tree.getroot()
+    # Add some padding (5%) to the ranges
+    padding = 0.05
+    y1_min = values1.min() * (1 - padding) if values1.min() > 0 else values1.min() * (1 + padding)
+    y1_max = values1.max() * (1 + padding) if values1.max() > 0 else values1.max() * (1 - padding)
+    y2_min = values2.min() * (1 - padding) if values2.min() > 0 else values2.min() * (1 + padding)
+    y2_max = values2.max() * (1 + padding) if values2.max() > 0 else values2.max() * (1 - padding)
     
-    # Extract values from IndexValuationResults in OUTPUT file
-    values = []
-    index_valuation_results = output_root.find(".//IndexValuationResults")
+    # Get the overall date range
+    all_dates = df['Date'].unique()
+    start_date = df['Date'].min()
+    end_date = df['Date'].max()
     
-    if index_valuation_results is None:
-        raise ValueError(f"Could not find IndexValuationResults in {output_xml_path}")
+    # Define colors for the two indices
+    color1 = 'blue'
+    color2 = 'red'
     
-    for value_elem in index_valuation_results.findall("Value"):
-        if value_elem.text:
-            values.append(float(value_elem.text.strip()))
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(3, 1, figsize=figsize)
+    fig.suptitle('Index Valuation Results Comparison', fontsize=16, fontweight='bold')
     
-    # Check if number of values matches number of dates
-    if len(values) != len(date_list):
-        print(f"WARNING: Number of values ({len(values)}) doesn't match number of dates ({len(date_list)})")
-        print(f"  Input file: {input_xml_path}")
-        print(f"  Output file: {output_xml_path}")
+    for idx, dtm_type in enumerate(date_to_match_types):
+        ax = axes[idx]
+        
+        # Filter data for this DateToMatch type
+        df_dtm = df[df['DateToMatch_Type'] == dtm_type]
+        
+        # Get data for each index
+        df1 = df_dtm[df_dtm['Index'] == index1].sort_values('Date')
+        df2 = df_dtm[df_dtm['Index'] == index2].sort_values('Date')
+        
+        # Create twin axis
+        ax2 = ax.twinx()
+        
+        # Plot first index on left y-axis
+        if not df1.empty:
+            line1 = ax.plot(df1['Date'], df1['Value'], 
+                           color=color1, linewidth=2, label=index1, marker='o', markersize=3)
+        
+        # Plot second index on right y-axis
+        if not df2.empty:
+            line2 = ax2.plot(df2['Date'], df2['Value'], 
+                            color=color2, linewidth=2, label=index2, marker='s', markersize=3)
+        
+        # Set consistent y-axis ranges
+        ax.set_ylim(y1_min, y1_max)
+        ax2.set_ylim(y2_min, y2_max)
+        
+        # Set y-axis labels with matching colors
+        ax.set_ylabel(index1, fontsize=12, fontweight='bold', color=color1)
+        ax2.set_ylabel(index2, fontsize=12, fontweight='bold', color=color2)
+        
+        # Color the y-axis tick labels to match
+        ax.tick_params(axis='y', labelcolor=color1)
+        ax2.tick_params(axis='y', labelcolor=color2)
+        
+        # Set x-axis label
+        ax.set_xlabel('Date', fontsize=11)
+        
+        # Format x-axis
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        
+        # Set x-axis limits
+        ax.set_xlim(start_date, end_date)
+        
+        # Customize x-axis ticks to show start and end dates explicitly
+        # Set major locator for intermediate dates
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        
+        # Get current ticks
+        current_ticks = ax.get_xticks()
+        
+        # Add start and end dates to ticks
+        date_range = (end_date - start_date).days
+        if date_range > 30:
+            # For longer periods, show fewer intermediate ticks
+            ax.xaxis.set_major_locator(mdates.MonthLocator())
+        elif date_range > 7:
+            # For medium periods, show weekly ticks
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator())
+        
+        # Ensure start and end dates are shown
+        tick_dates = list(ax.get_xticks())
+        start_date_num = mdates.date2num(start_date)
+        end_date_num = mdates.date2num(end_date)
+        
+        if start_date_num not in tick_dates:
+            tick_dates.insert(0, start_date_num)
+        if end_date_num not in tick_dates:
+            tick_dates.append(end_date_num)
+        
+        ax.set_xticks(tick_dates)
+        
+        # Rotate x-axis labels
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # Set subplot title
+        ax.set_title(f'DateToMatch: {dtm_type}', fontsize=13, fontweight='bold', pad=10)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, linestyle='--')
+        
+        # Create combined legend
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='best', framealpha=0.9)
     
-    # Create DataFrame
-    df = pd.DataFrame({
-        'Date': date_list,
-        'Value': values[:len(date_list)]  # Use only as many values as we have dates
-    })
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     
-    return df
+    # Save figure if output path is provided
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to: {output_path}")
+    
+    plt.show()
+    
+    return fig
 
 
-def process_directory(directory):
+def create_summary_statistics_table(df, output_path=None):
     """
-    Process all input and output XML files in a directory.
-    
-    Parameters:
-    -----------
-    directory : str
-        Directory containing both input and output XML files
-        Input files: {indexName}_{DateToMatch_Type}.xml
-        Output files: OUT_{indexName}_{DateToMatch_Type}.xml
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Combined DataFrame with columns: Index, DateToMatch_Type, Date, Value
-    """
-    
-    # Find all input XML files (non-OUT files)
-    all_files = glob.glob(os.path.join(directory, "*.xml"))
-    input_files = [f for f in all_files if not os.path.basename(f).startswith("OUT_")]
-    
-    all_data = []
-    
-    for input_path in input_files:
-        input_filename = os.path.basename(input_path)
-        
-        # Construct corresponding output filename
-        output_filename = "OUT_" + input_filename
-        output_path = os.path.join(directory, output_filename)
-        
-        if not os.path.exists(output_path):
-            print(f"WARNING: Output file not found for {input_filename}")
-            print(f"  Expected: {output_filename}")
-            continue
-        
-        print(f"Processing: {input_filename} -> {output_filename}")
-        
-        try:
-            # Parse filename to extract index name and DateToMatch type
-            # Expected format: {indexName}_{DateToMatch_Type}.xml
-            base_name = input_filename.replace(".xml", "")
-            parts = base_name.rsplit("_", 1)  # Split from the right, only once
-            
-            if len(parts) == 2:
-                index_name = parts[0]
-                dtm_type = parts[1]
-            else:
-                print(f"WARNING: Could not parse filename: {input_filename}")
-                continue
-            
-            # Extract data from input and output files
-            df = extract_valuation_results(input_path, output_path)
-            
-            # Add Index and DateToMatch_Type columns
-            df['Index'] = index_name
-            df['DateToMatch_Type'] = dtm_type
-            
-            all_data.append(df)
-            
-        except Exception as e:
-            print(f"ERROR processing {input_filename}: {str(e)}")
-            continue
-    
-    # Combine all dataframes
-    if all_data:
-        combined_df = pd.concat(all_data, ignore_index=True)
-        # Reorder columns
-        combined_df = combined_df[['Index', 'DateToMatch_Type', 'Date', 'Value']]
-        return combined_df
-    else:
-        return pd.DataFrame(columns=['Index', 'DateToMatch_Type', 'Date', 'Value'])
-
-
-def save_results_to_csv(directory, csv_output_path):
-    """
-    Process all files in a directory and save to CSV.
-    
-    Parameters:
-    -----------
-    directory : str
-        Directory containing both input and output XML files
-    csv_output_path : str
-        Path where the CSV file should be saved
-        
-    Returns:
-    --------
-    pd.DataFrame
-        The combined DataFrame
-    """
-    
-    # Process all files
-    df = process_directory(directory)
-    
-    if len(df) == 0:
-        print("No data extracted!")
-        return df
-    
-    # Save to CSV
-    df.to_csv(csv_output_path, index=False)
-    print(f"\nResults saved to: {csv_output_path}")
-    print(f"Total rows: {len(df)}")
-    print(f"\nDataFrame preview:")
-    print(df.head(10))
-    
-    # Print summary statistics
-    print(f"\nSummary by Index and DateToMatch_Type:")
-    summary = df.groupby(['Index', 'DateToMatch_Type']).agg({
-        'Value': ['count', 'mean', 'min', 'max']
-    })
-    print(summary)
-    
-    return df
-
-
-def create_pivot_table(df, output_path=None):
-    """
-    Create a pivot table for easier comparison across DateToMatch types.
+    Create a summary statistics table for the valuation results.
     
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame from process_directory
     output_path : str, optional
-        Path to save the pivot table CSV
+        Path to save the summary table CSV
         
     Returns:
     --------
     pd.DataFrame
-        Pivot table with Date as index, and columns for each Index-DateToMatch combination
+        Summary statistics table
     """
     
-    # Create a combined column name
-    df['Index_DTM'] = df['Index'] + '_' + df['DateToMatch_Type']
+    summary = df.groupby(['Index', 'DateToMatch_Type']).agg({
+        'Value': ['count', 'mean', 'std', 'min', 'max']
+    }).round(4)
     
-    # Create pivot table
-    pivot = df.pivot_table(
-        values='Value',
-        index='Date',
-        columns='Index_DTM',
-        aggfunc='first'
-    )
+    # Flatten column names
+    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+    summary = summary.reset_index()
     
     if output_path:
-        pivot.to_csv(output_path)
-        print(f"Pivot table saved to: {output_path}")
+        summary.to_csv(output_path, index=False)
+        print(f"Summary statistics saved to: {output_path}")
     
-    return pivot
+    print("\nSummary Statistics:")
+    print(summary)
+    
+    return summary
 
 
-# Example usage:
+# Complete workflow example
 if __name__ == "__main__":
-    # Process all files in the directory
+    # Step 1: Process XML files and create DataFrame
     df = save_results_to_csv(
         directory="./output",
         csv_output_path="./valuation_results.csv"
     )
     
-    # Create pivot table if data was extracted
     if len(df) > 0:
+        # Step 2: Create pivot table
         pivot = create_pivot_table(df, output_path="./valuation_results_pivot.csv")
         print("\nPivot Table Preview:")
         print(pivot.head())
+        
+        # Step 3: Create summary statistics
+        summary = create_summary_statistics_table(df, output_path="./summary_statistics.csv")
+        
+        # Step 4: Visualize results
+        fig = visualize_valuation_results(df, output_path="./valuation_comparison.png")
+```
+
+**Key features of the visualization:**
+
+1. **Three subplots** - one for each DateToMatch type (BuildDate, ExpiryDate, Empty)
+
+2. **Dual y-axes** - left axis for first index (blue), right axis for second index (red)
+
+3. **Consistent y-axis ranges** across all three subplots for comparability
+
+4. **X-axis formatting**:
+   - Shows dates from BuildDate to ExpiryDate
+   - Explicitly displays start and end dates
+   - Automatic intelligent tick spacing based on date range
+   - Rotated labels for better readability
+
+5. **Color-coded**:
+   - Lines match their respective y-axis labels
+   - Blue for first index (left y-axis)
+   - Red for second index (right y-axis)
+
+6. **Legends** on each subplot showing both indices
+
+7. **Grid** for easier value reading
+
+8. **High-resolution output** (300 DPI) when saved
+
+**The output will look like:**
+```
+┌─────────────────────────────────────────────┐
+│   Index Valuation Results Comparison        │
+├─────────────────────────────────────────────┤
+│  DateToMatch: BuildDate                     │
+│  [Blue line for Index1, Red line for Index2]│
+├─────────────────────────────────────────────┤
+│  DateToMatch: ExpiryDate                    │
+│  [Blue line for Index1, Red line for Index2]│
+├─────────────────────────────────────────────┤
+│  DateToMatch: Empty                         │
+│  [Blue line for Index1, Red line for Index2]│
+└─────────────────────────────────────────────┘
