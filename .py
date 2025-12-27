@@ -2,8 +2,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
+import mplcursors  # For interactive tooltips
 
-def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
+def visualize_valuation_results(df, output_path=None, figsize=(15, 12), interactive=True):
     """
     Visualize valuation results with three subplots for different DateToMatch types.
     
@@ -15,6 +16,8 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
         Path to save the figure
     figsize : tuple, optional
         Figure size (width, height)
+    interactive : bool, optional
+        If True, enable interactive tooltips (works in interactive environments)
     """
     
     # Convert Date column to datetime
@@ -43,9 +46,12 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
     y2_max = values2.max() * (1 + padding) if values2.max() > 0 else values2.max() * (1 - padding)
     
     # Get the overall date range
-    all_dates = df['Date'].unique()
     start_date = df['Date'].min()
     end_date = df['Date'].max()
+    
+    # Format dates for display
+    start_date_str = start_date.strftime('%Y-%m-%d')
+    end_date_str = end_date.strftime('%Y-%m-%d')
     
     # Define colors for the two indices
     color1 = 'blue'
@@ -53,7 +59,11 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
     
     # Create figure with 3 subplots
     fig, axes = plt.subplots(3, 1, figsize=figsize)
-    fig.suptitle('Index Valuation Results Comparison', fontsize=16, fontweight='bold')
+    fig.suptitle(f'Index Valuation Results Comparison\nBuildDate: {start_date_str}  |  ExpiryDate: {end_date_str}', 
+                 fontsize=16, fontweight='bold')
+    
+    # Store line objects for interactive tooltips
+    all_lines = []
     
     for idx, dtm_type in enumerate(date_to_match_types):
         ax = axes[idx]
@@ -68,15 +78,19 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
         # Create twin axis
         ax2 = ax.twinx()
         
-        # Plot first index on left y-axis
+        # Plot first index on left y-axis (thinner line)
         if not df1.empty:
             line1 = ax.plot(df1['Date'], df1['Value'], 
-                           color=color1, linewidth=2, label=index1, marker='o', markersize=3)
+                           color=color1, linewidth=1.2, label=index1, 
+                           marker='o', markersize=2, alpha=0.8)
+            all_lines.extend(line1)
         
-        # Plot second index on right y-axis
+        # Plot second index on right y-axis (thinner line)
         if not df2.empty:
             line2 = ax2.plot(df2['Date'], df2['Value'], 
-                            color=color2, linewidth=2, label=index2, marker='s', markersize=3)
+                            color=color2, linewidth=1.2, label=index2, 
+                            marker='s', markersize=2, alpha=0.8)
+            all_lines.extend(line2)
         
         # Set consistent y-axis ranges
         ax.set_ylim(y1_min, y1_max)
@@ -96,53 +110,72 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
         # Format x-axis
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
         
-        # Set x-axis limits
-        ax.set_xlim(start_date, end_date)
-        
-        # Customize x-axis ticks to show start and end dates explicitly
-        # Set major locator for intermediate dates
-        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-        
-        # Get current ticks
-        current_ticks = ax.get_xticks()
-        
-        # Add start and end dates to ticks
+        # Set x-axis limits with a bit of padding to avoid label overlap
         date_range = (end_date - start_date).days
-        if date_range > 30:
-            # For longer periods, show fewer intermediate ticks
-            ax.xaxis.set_major_locator(mdates.MonthLocator())
-        elif date_range > 7:
-            # For medium periods, show weekly ticks
-            ax.xaxis.set_major_locator(mdates.WeekdayLocator())
+        padding_days = max(1, date_range * 0.02)  # 2% padding
+        ax.set_xlim(start_date - pd.Timedelta(days=padding_days), 
+                    end_date + pd.Timedelta(days=padding_days))
         
-        # Ensure start and end dates are shown
-        tick_dates = list(ax.get_xticks())
+        # Customize x-axis ticks to avoid overlap
+        if date_range > 60:
+            # For longer periods, show monthly ticks
+            ax.xaxis.set_major_locator(mdates.MonthLocator())
+        elif date_range > 30:
+            # For medium-long periods, show bi-weekly ticks
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+        elif date_range > 14:
+            # For medium periods, show weekly ticks
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        else:
+            # For short periods, show every few days
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, date_range // 7)))
+        
+        # Manually set ticks to include start and end dates
+        tick_locs = list(ax.get_xticks())
         start_date_num = mdates.date2num(start_date)
         end_date_num = mdates.date2num(end_date)
         
-        if start_date_num not in tick_dates:
-            tick_dates.insert(0, start_date_num)
-        if end_date_num not in tick_dates:
-            tick_dates.append(end_date_num)
+        # Remove ticks that are too close to start/end dates (within 3% of range)
+        threshold = (end_date_num - start_date_num) * 0.03
+        tick_locs = [t for t in tick_locs 
+                     if abs(t - start_date_num) > threshold and abs(t - end_date_num) > threshold]
         
-        ax.set_xticks(tick_dates)
+        # Add start and end dates
+        tick_locs = [start_date_num] + tick_locs + [end_date_num]
+        tick_locs = sorted(set(tick_locs))
         
-        # Rotate x-axis labels
-        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        ax.set_xticks(tick_locs)
+        
+        # Rotate x-axis labels and adjust alignment
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right', fontsize=9)
         
         # Set subplot title
         ax.set_title(f'DateToMatch: {dtm_type}', fontsize=13, fontweight='bold', pad=10)
         
         # Add grid
-        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
         
         # Create combined legend
         lines1, labels1 = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc='best', framealpha=0.9)
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='best', framealpha=0.9, fontsize=10)
     
     # Adjust layout to prevent overlap
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    # Add interactive tooltips if requested
+    if interactive:
+        cursor = mplcursors.cursor(all_lines, hover=True)
+        
+        @cursor.connect("add")
+        def on_add(sel):
+            # Get the data point
+            x, y = sel.target
+            # Convert x (date number) back to date
+            date = mdates.num2date(x).strftime('%Y-%m-%d')
+            # Format the annotation
+            sel.annotation.set_text(f'Date: {date}\nValue: {y:.4f}')
+            sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9)
     
     # Save figure if output path is provided
     if output_path:
@@ -154,43 +187,143 @@ def visualize_valuation_results(df, output_path=None, figsize=(15, 12)):
     return fig
 
 
-def create_summary_statistics_table(df, output_path=None):
+def create_interactive_html_plot(df, output_path='valuation_interactive.html'):
     """
-    Create a summary statistics table for the valuation results.
+    Create an interactive HTML plot using Plotly that shows values on hover.
     
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame from process_directory
-    output_path : str, optional
-        Path to save the summary table CSV
-        
-    Returns:
-    --------
-    pd.DataFrame
-        Summary statistics table
+    output_path : str
+        Path to save the HTML file
     """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        print("Plotly not installed. Install with: pip install plotly")
+        return None
     
-    summary = df.groupby(['Index', 'DateToMatch_Type']).agg({
-        'Value': ['count', 'mean', 'std', 'min', 'max']
-    }).round(4)
+    # Convert Date column to datetime
+    df['Date'] = pd.to_datetime(df['Date'])
     
-    # Flatten column names
-    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
-    summary = summary.reset_index()
+    # Get unique indices and DateToMatch types
+    indices = df['Index'].unique()
+    date_to_match_types = ['BuildDate', 'ExpiryDate', 'Empty']
     
-    if output_path:
-        summary.to_csv(output_path, index=False)
-        print(f"Summary statistics saved to: {output_path}")
+    index1 = indices[0]
+    index2 = indices[1] if len(indices) > 1 else indices[0]
     
-    print("\nSummary Statistics:")
-    print(summary)
+    # Get date range
+    start_date = df['Date'].min()
+    end_date = df['Date'].max()
+    start_date_str = start_date.strftime('%Y-%m-%d')
+    end_date_str = end_date.strftime('%Y-%m-%d')
     
-    return summary
+    # Calculate global y-axis ranges
+    values1 = df[df['Index'] == index1]['Value']
+    values2 = df[df['Index'] == index2]['Value']
+    
+    padding = 0.05
+    y1_min = values1.min() * (1 - padding)
+    y1_max = values1.max() * (1 + padding)
+    y2_min = values2.min() * (1 - padding)
+    y2_max = values2.max() * (1 + padding)
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=[f'DateToMatch: {dtm}' for dtm in date_to_match_types],
+        specs=[[{"secondary_y": True}],
+               [{"secondary_y": True}],
+               [{"secondary_y": True}]],
+        vertical_spacing=0.12
+    )
+    
+    # Add traces for each DateToMatch type
+    for idx, dtm_type in enumerate(date_to_match_types):
+        row = idx + 1
+        
+        # Filter data
+        df_dtm = df[df['DateToMatch_Type'] == dtm_type]
+        df1 = df_dtm[df_dtm['Index'] == index1].sort_values('Date')
+        df2 = df_dtm[df_dtm['Index'] == index2].sort_values('Date')
+        
+        # Add trace for index1 (left y-axis)
+        if not df1.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=df1['Date'],
+                    y=df1['Value'],
+                    name=index1,
+                    mode='lines+markers',
+                    line=dict(color='blue', width=1.5),
+                    marker=dict(size=4),
+                    hovertemplate='<b>%{fullData.name}</b><br>' +
+                                  'Date: %{x|%Y-%m-%d}<br>' +
+                                  'Value: %{y:.4f}<br>' +
+                                  '<extra></extra>',
+                    showlegend=(idx == 0)  # Only show legend for first subplot
+                ),
+                row=row, col=1, secondary_y=False
+            )
+        
+        # Add trace for index2 (right y-axis)
+        if not df2.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=df2['Date'],
+                    y=df2['Value'],
+                    name=index2,
+                    mode='lines+markers',
+                    line=dict(color='red', width=1.5),
+                    marker=dict(size=4, symbol='square'),
+                    hovertemplate='<b>%{fullData.name}</b><br>' +
+                                  'Date: %{x|%Y-%m-%d}<br>' +
+                                  'Value: %{y:.4f}<br>' +
+                                  '<extra></extra>',
+                    showlegend=(idx == 0)
+                ),
+                row=row, col=1, secondary_y=True
+            )
+        
+        # Update y-axes
+        fig.update_yaxes(title_text=index1, title_font=dict(color='blue'), 
+                        tickfont=dict(color='blue'),
+                        range=[y1_min, y1_max],
+                        row=row, col=1, secondary_y=False)
+        fig.update_yaxes(title_text=index2, title_font=dict(color='red'),
+                        tickfont=dict(color='red'),
+                        range=[y2_min, y2_max],
+                        row=row, col=1, secondary_y=True)
+        
+        # Update x-axis
+        fig.update_xaxes(title_text='Date', row=row, col=1)
+    
+    # Update layout
+    fig.update_layout(
+        title=f'Index Valuation Results Comparison<br>' +
+              f'<sub>BuildDate: {start_date_str}  |  ExpiryDate: {end_date_str}</sub>',
+        height=1000,
+        hovermode='closest',
+        showlegend=True,
+        legend=dict(x=1.15, y=1)
+    )
+    
+    # Save to HTML
+    fig.write_html(output_path)
+    print(f"Interactive HTML plot saved to: {output_path}")
+    
+    return fig
 
 
 # Complete workflow example
 if __name__ == "__main__":
+    # Install mplcursors if not already installed
+    # pip install mplcursors
+    # pip install plotly  # Optional, for interactive HTML plots
+    
     # Step 1: Process XML files and create DataFrame
     df = save_results_to_csv(
         directory="./output",
@@ -200,52 +333,20 @@ if __name__ == "__main__":
     if len(df) > 0:
         # Step 2: Create pivot table
         pivot = create_pivot_table(df, output_path="./valuation_results_pivot.csv")
-        print("\nPivot Table Preview:")
-        print(pivot.head())
         
         # Step 3: Create summary statistics
         summary = create_summary_statistics_table(df, output_path="./summary_statistics.csv")
         
-        # Step 4: Visualize results
-        fig = visualize_valuation_results(df, output_path="./valuation_comparison.png")
-```
-
-**Key features of the visualization:**
-
-1. **Three subplots** - one for each DateToMatch type (BuildDate, ExpiryDate, Empty)
-
-2. **Dual y-axes** - left axis for first index (blue), right axis for second index (red)
-
-3. **Consistent y-axis ranges** across all three subplots for comparability
-
-4. **X-axis formatting**:
-   - Shows dates from BuildDate to ExpiryDate
-   - Explicitly displays start and end dates
-   - Automatic intelligent tick spacing based on date range
-   - Rotated labels for better readability
-
-5. **Color-coded**:
-   - Lines match their respective y-axis labels
-   - Blue for first index (left y-axis)
-   - Red for second index (right y-axis)
-
-6. **Legends** on each subplot showing both indices
-
-7. **Grid** for easier value reading
-
-8. **High-resolution output** (300 DPI) when saved
-
-**The output will look like:**
-```
-┌─────────────────────────────────────────────┐
-│   Index Valuation Results Comparison        │
-├─────────────────────────────────────────────┤
-│  DateToMatch: BuildDate                     │
-│  [Blue line for Index1, Red line for Index2]│
-├─────────────────────────────────────────────┤
-│  DateToMatch: ExpiryDate                    │
-│  [Blue line for Index1, Red line for Index2]│
-├─────────────────────────────────────────────┤
-│  DateToMatch: Empty                         │
-│  [Blue line for Index1, Red line for Index2]│
-└─────────────────────────────────────────────┘
+        # Step 4: Visualize results (matplotlib with interactive tooltips)
+        fig = visualize_valuation_results(
+            df, 
+            output_path="./valuation_comparison.png",
+            interactive=True  # Enable hover tooltips
+        )
+        
+        # Step 5: Create interactive HTML plot (Plotly - fully interactive)
+        interactive_fig = create_interactive_html_plot(
+            df,
+            output_path="./valuation_interactive.html"
+        )
+        print("\nOpen 'valuation_interactive.html' in your browser for a fully interactive plot!")
