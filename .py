@@ -1,11 +1,10 @@
-import xml.etree.ElementTree as ET
+from lxml import etree
 from datetime import datetime, timedelta
 import os
-from copy import deepcopy
 
 def modify_xml_file(input_xml_path, index_name, output_dir="."):
     """
-    Modify XML file for leveraged ETF product.
+    Modify XML file for leveraged ETF product while preserving original formatting.
     
     Parameters:
     -----------
@@ -17,8 +16,9 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         Directory to save output files (default: current directory)
     """
     
-    # Parse the XML file - preserve formatting
-    tree = ET.parse(input_xml_path)
+    # Parse the XML file - lxml preserves formatting better
+    parser = etree.XMLParser(remove_blank_text=False, strip_cdata=False)
+    tree = etree.parse(input_xml_path, parser)
     root = tree.getroot()
     
     # ========== Step 1: Find all BuildDate elements ==========
@@ -118,30 +118,23 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
     
     for option_name, date_value in date_to_match_options:
         # Create a deep copy by re-parsing to ensure complete independence
-        tree_copy = ET.parse(input_xml_path)
+        tree_copy = etree.parse(input_xml_path, parser)
         root_copy = tree_copy.getroot()
         
         # Find Calculate element in the copy
         calculate_elem_copy = root_copy.find(".//Calculate")
         
         # Create IndexValuation element
-        index_valuation = ET.Element("IndexValuation")
+        index_valuation = etree.Element("IndexValuation")
         
-        # Add proper indentation (optional, for readability)
-        index_valuation.text = "\n    "
-        index_valuation.tail = "\n"
-        
-        index_elem = ET.SubElement(index_valuation, "Index")
+        index_elem = etree.SubElement(index_valuation, "Index")
         index_elem.text = index_name
-        index_elem.tail = "\n    "
         
-        model_elem_new = ET.SubElement(index_valuation, "Model")
+        model_elem_new = etree.SubElement(index_valuation, "Model")
         model_elem_new.text = model_name
-        model_elem_new.tail = "\n    "
         
-        date_elem = ET.SubElement(index_valuation, "Date")
+        date_elem = etree.SubElement(index_valuation, "Date")
         date_elem.text = ", ".join(date_list)
-        date_elem.tail = "\n"
         
         # Insert IndexValuation right before Calculate
         parent = None
@@ -171,15 +164,20 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
             else:
                 # Set or create DateToMatch
                 if date_to_match_elem is None:
-                    date_to_match_elem = ET.SubElement(calibrated_forward, "DateToMatch")
+                    date_to_match_elem = etree.SubElement(calibrated_forward, "DateToMatch")
                 date_to_match_elem.text = date_value
         
-        # Save the file with proper formatting
+        # Save the file with original formatting preserved
         output_filename = f"{index_name}_{option_name}.xml"
         output_path = os.path.join(output_dir, output_filename)
         
-        # Write with UTF-8 encoding and XML declaration
-        tree_copy.write(output_path, encoding="utf-8", xml_declaration=True)
+        # Write with UTF-8 encoding and preserve formatting
+        tree_copy.write(
+            output_path, 
+            encoding="utf-8", 
+            xml_declaration=True,
+            pretty_print=False  # Don't reformat - keep original formatting
+        )
         print(f"Saved: {output_path}")
     
     print("\nAll files generated successfully!")
