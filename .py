@@ -124,6 +124,17 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         # Find Calculate element in the copy
         calculate_elem_copy = root_copy.find(".//Calculate")
         
+        if calculate_elem_copy is None:
+            raise ValueError("Could not find <Calculate> element in the copy")
+        
+        # Find the parent of Calculate
+        parent = calculate_elem_copy.getparent()
+        
+        if parent is None:
+            raise ValueError("Could not find parent of <Calculate> element")
+        
+        print(f"\n{option_name}: Found Calculate element, parent is <{parent.tag}>")
+        
         # Create IndexValuation element
         index_valuation = etree.Element("IndexValuation")
         
@@ -136,22 +147,17 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
         date_elem = etree.SubElement(index_valuation, "Date")
         date_elem.text = ", ".join(date_list)
         
-        # Insert IndexValuation right before Calculate
-        parent = None
-        for elem in root_copy.iter():
-            for child in elem:
-                if child.tag == "Calculate":
-                    parent = elem
-                    break
-            if parent is not None:
-                break
+        # Find index of Calculate in parent
+        calc_index = list(parent).index(calculate_elem_copy)
+        print(f"{option_name}: Calculate is at index {calc_index} in parent")
         
-        if parent is not None:
-            # Find index of Calculate
-            calc_index = list(parent).index(calculate_elem_copy)
-            parent.insert(calc_index, index_valuation)
-        else:
-            raise ValueError("Could not find parent of <Calculate> element")
+        # Insert IndexValuation right before Calculate
+        parent.insert(calc_index, index_valuation)
+        print(f"{option_name}: Inserted IndexValuation at index {calc_index}")
+        
+        # Verify insertion
+        new_calc_index = list(parent).index(calculate_elem_copy)
+        print(f"{option_name}: After insertion, Calculate is now at index {new_calc_index}")
         
         # Modify DateToMatch in CalibratedForward
         for calibrated_forward in root_copy.iter("CalibratedForward"):
@@ -161,11 +167,14 @@ def modify_xml_file(input_xml_path, index_name, output_dir="."):
                 # Remove DateToMatch if it exists
                 if date_to_match_elem is not None:
                     calibrated_forward.remove(date_to_match_elem)
+                    print(f"{option_name}: Removed DateToMatch from CalibratedForward")
             else:
                 # Set or create DateToMatch
                 if date_to_match_elem is None:
                     date_to_match_elem = etree.SubElement(calibrated_forward, "DateToMatch")
+                    print(f"{option_name}: Created new DateToMatch element")
                 date_to_match_elem.text = date_value
+                print(f"{option_name}: Set DateToMatch to {date_value}")
         
         # Save the file with original formatting preserved
         output_filename = f"{index_name}_{option_name}.xml"
