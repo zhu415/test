@@ -1,3 +1,39 @@
+def create_summary_statistics_table(df, output_path=None):
+    """
+    Create a summary statistics table for the valuation results.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        DataFrame from process_directory
+    output_path : str, optional
+        Path to save the summary table CSV
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Summary statistics table
+    """
+    
+    summary = df.groupby(['Index', 'DateToMatch_Type']).agg({
+        'Value': ['count', 'mean', 'std', 'min', 'max']
+    }).round(4)
+    
+    # Flatten column names
+    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+    summary = summary.reset_index()
+    
+    if output_path:
+        summary.to_csv(output_path, index=False)
+        print(f"Summary statistics saved to: {output_path}")
+    
+    print("\nSummary Statistics:")
+    print(summary)
+    
+    return summary
+
+
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
