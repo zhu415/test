@@ -4,12 +4,14 @@ Bond Price Calculator from Excel Data
 Reads yield curve and hazard rate data from an Excel file,
 calculates zero-coupon bond prices, survival probabilities,
 and risky bond prices to compare with index values.
+
+Assumes yield curve dates match index valuation dates (no interpolation needed).
 """
 
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import Tuple, List
+from typing import Tuple
 
 
 def read_excel_data(file_path: str, sheet_name: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -33,7 +35,7 @@ def read_excel_data(file_path: str, sheet_name: str) -> Tuple[pd.DataFrame, pd.D
     yield_curve_df = pd.DataFrame({
         'Date': pd.to_datetime(df.iloc[2:, 0]),
         'YieldPoint': pd.to_numeric(df.iloc[2:, 1], errors='coerce')
-    }).dropna().reset_index(drop=True)
+    }).reset_index(drop=True)
     
     # Extract hazard rate data (columns C and D, i.e., 2 and 3)
     hazard_rate_df = pd.DataFrame({
@@ -50,20 +52,19 @@ def read_excel_data(file_path: str, sheet_name: str) -> Tuple[pd.DataFrame, pd.D
     index_valuation_df = pd.DataFrame({
         'Date': pd.to_datetime(index_dates),
         'IndexValue': pd.to_numeric(df.iloc[2:, 5], errors='coerce')
-    }).dropna().reset_index(drop=True)
+    }).reset_index(drop=True)
     
     return yield_curve_df, hazard_rate_df, index_valuation_df
 
 
-def calculate_discount_factor(yield_curve_df: pd.DataFrame, 
+def calculate_discount_factor(yield_value: float, 
                                valuation_date: datetime,
                                target_date: datetime) -> float:
     """
-    Calculate the discount factor (zero-coupon bond price) from the yield curve.
-    Uses linear interpolation for yields.
+    Calculate the discount factor using the provided yield directly.
     
     Parameters:
-        yield_curve_df: DataFrame with Date and YieldPoint columns
+        yield_value: The yield rate for this specific date
         valuation_date: The base date for discounting
         target_date: The date to discount back from
         
@@ -73,21 +74,11 @@ def calculate_discount_factor(yield_curve_df: pd.DataFrame,
     if target_date <= valuation_date:
         return 1.0
     
-    # Calculate time to maturity in years (ACT/365)
+    # Time to maturity in years (ACT/365)
     T = (target_date - valuation_date).days / 365.0
     
-    # Interpolate yield at target date
-    yield_curve_df = yield_curve_df.sort_values('Date').reset_index(drop=True)
-    
-    # Convert dates to numeric for interpolation
-    dates_numeric = (yield_curve_df['Date'] - valuation_date).dt.days / 365.0
-    yields = yield_curve_df['YieldPoint'].values
-    
-    # Linear interpolation
-    yield_at_T = np.interp(T, dates_numeric, yields)
-    
     # Discount factor: P(0,T) = exp(-r * T)
-    discount_factor = np.exp(-yield_at_T * T)
+    discount_factor = np.exp(-yield_value * T)
     
     return discount_factor
 
@@ -137,7 +128,7 @@ def calculate_survival_probability(hazard_rate_df: pd.DataFrame,
         effective_end = min(period_end, target_date)
         
         if effective_end > period_start:
-            # Time in years
+            # Time in years (ACT/365)
             dt = (effective_end - period_start).days / 365.0
             cumulative_hazard += hazard_rate * dt
         
@@ -150,43 +141,6 @@ def calculate_survival_probability(hazard_rate_df: pd.DataFrame,
     survival_prob = np.exp(-cumulative_hazard)
     
     return survival_prob
-
-
-def calculate_risky_bond_price(yield_curve_df: pd.DataFrame,
-                                hazard_rate_df: pd.DataFrame,
-                                valuation_date: datetime,
-                                target_date: datetime,
-                                recovery_rate: float = 0.4) -> float:
-    """
-    Calculate the risky zero-coupon bond price.
-    
-    Risky Bond Price = Discount Factor * [Survival Prob + (1 - Survival Prob) * Recovery Rate]
-    
-    For a defaultable zero-coupon bond:
-    V = P(0,T) * [Q(0,T) + (1 - Q(0,T)) * R]
-    
-    where:
-    - P(0,T) is the risk-free discount factor
-    - Q(0,T) is the survival probability
-    - R is the recovery rate
-    
-    Parameters:
-        yield_curve_df: DataFrame with yield curve data
-        hazard_rate_df: DataFrame with hazard rate data
-        valuation_date: The base date
-        target_date: The maturity date
-        recovery_rate: Recovery rate in case of default (default 0.4)
-        
-    Returns:
-        Risky bond price
-    """
-    discount_factor = calculate_discount_factor(yield_curve_df, valuation_date, target_date)
-    survival_prob = calculate_survival_probability(hazard_rate_df, valuation_date, target_date)
-    
-    # Risky bond price formula
-    risky_price = discount_factor * (survival_prob + (1 - survival_prob) * recovery_rate)
-    
-    return risky_price
 
 
 def calculate_all_prices(file_path: str, 
@@ -219,22 +173,28 @@ def calculate_all_prices(file_path: str,
     print(index_valuation_df.head(10))
     
     # Use the first date as valuation date
-    valuation_date = yield_curve_df['Date'].min()
+    valuation_date = yield_curve_df['Date'].iloc[0]
     print(f"\nValuation Date: {valuation_date.strftime('%Y-%m-%d')}")
     print(f"Recovery Rate: {recovery_rate}")
     
     # Calculate prices for each date in the index valuation
     results = []
     
-    for _, row in index_valuation_df.iterrows():
-        target_date = row['Date']
-        index_value = row['IndexValue']
+    for i in range(len(index_valuation_df)):
+        target_date = index_valuation_df.loc[i, 'Date']
+        index_value = index_valuation_df.loc[i, 'IndexValue']
+        yield_value = yield_curve_df.loc[i, 'YieldPoint']
         
-        discount_factor = calculate_discount_factor(yield_curve_df, valuation_date, target_date)
+        # Skip if any value is NaN
+        if pd.isna(target_date) or pd.isna(index_value) or pd.isna(yield_value):
+            continue
+        
+        discount_factor = calculate_discount_factor(yield_value, valuation_date, target_date)
         survival_prob = calculate_survival_probability(hazard_rate_df, valuation_date, target_date)
-        calculated_price = calculate_risky_bond_price(
-            yield_curve_df, hazard_rate_df, valuation_date, target_date, recovery_rate
-        )
+        
+        # Risky bond price formula:
+        # V = P(0,T) * [Q(0,T) + (1 - Q(0,T)) * R]
+        calculated_price = discount_factor * (survival_prob + (1 - survival_prob) * recovery_rate)
         
         # Calculate difference
         diff = calculated_price - index_value
@@ -242,6 +202,7 @@ def calculate_all_prices(file_path: str,
         
         results.append({
             'Date': target_date,
+            'YieldPoint': yield_value,
             'DiscountFactor': discount_factor,
             'SurvivalProb': survival_prob,
             'CalculatedPrice': calculated_price,
@@ -268,39 +229,36 @@ def calculate_all_prices(file_path: str,
     return results_df
 
 
-# Example usage
+# =============================================================================
+# FOR JUPYTER NOTEBOOK USAGE - Copy everything above and run like this:
+# =============================================================================
+#
+# file_path = r"C:\path\to\your\file.xlsx"
+# sheet_name = "df_goldman"
+# recovery_rate = 0.4
+#
+# results = calculate_all_prices(file_path, sheet_name, recovery_rate)
+#
+# =============================================================================
+
+
 if __name__ == "__main__":
+    # For command-line usage (not recommended for Jupyter)
     import sys
     
-    # Default values - modify these or pass as arguments
-    file_path = "input.xlsx"  # Change to your file path
-    sheet_name = "Sheet1"      # Change to your sheet name
-    recovery_rate = 0.4
+    if len(sys.argv) < 3:
+        print("Usage: python bond_price_calculator.py <file_path> <sheet_name> [recovery_rate]")
+        print("\nFor Jupyter notebook, use:")
+        print('  results = calculate_all_prices("your_file.xlsx", "sheet_name", 0.4)')
+        sys.exit(1)
     
-    # Parse command line arguments if provided
-    if len(sys.argv) >= 2:
-        file_path = sys.argv[1]
-    if len(sys.argv) >= 3:
-        sheet_name = sys.argv[2]
-    if len(sys.argv) >= 4:
-        recovery_rate = float(sys.argv[3])
+    file_path = sys.argv[1]
+    sheet_name = sys.argv[2]
+    recovery_rate = float(sys.argv[3]) if len(sys.argv) >= 4 else 0.4
     
-    print(f"Reading from: {file_path}")
-    print(f"Sheet: {sheet_name}")
-    print(f"Recovery Rate: {recovery_rate}")
-    print()
+    results = calculate_all_prices(file_path, sheet_name, recovery_rate)
     
-    try:
-        results = calculate_all_prices(file_path, sheet_name, recovery_rate)
-        
-        # Optionally save results
-        output_path = "bond_price_results.xlsx"
-        results.to_excel(output_path, index=False)
-        print(f"\nResults saved to: {output_path}")
-        
-    except FileNotFoundError:
-        print(f"Error: File '{file_path}' not found.")
-        print("\nUsage: python bond_price_calculator.py <file_path> <sheet_name> [recovery_rate]")
-    except Exception as e:
-        print(f"Error: {e}")
-        raise
+    # Save results
+    output_path = "bond_price_results.xlsx"
+    results.to_excel(output_path, index=False)
+    print(f"\nResults saved to: {output_path}")
